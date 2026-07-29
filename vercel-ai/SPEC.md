@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-A minimal chat interface that connects to a local LLM (running via MLX at `localhost:8080`) with bash execution capabilities. The app allows users to send prompts and receive responses, with the LLM able to invoke a `bash` tool to execute shell commands.
+A minimal chat interface that connects to a OpenAI-compatible LLM  with bash execution capabilities. The app allows users to send prompts and receive responses, with the LLM able to invoke a `bash` tool to execute shell commands.
 
 ---
 
@@ -44,20 +44,19 @@ A minimal chat interface that connects to a local LLM (running via MLX at `local
 │  │  ┌──────────────┐  │                                     │
 │  │  │  Return JSON │◀─┼─────────────────────────────────────┤
 │  │  │  - text      │  │                                     │
-│  │  │  - toolOutputs│                                  │      │
+│  │  │  - toolOutputs──┘                                │      │
 │  │  └──────────────┘                                   │      │
 │  └─────────────────┘                                   │      │
 │        │                                               │      │
 └────────┼────────────────────────────────────────────────┘      │
          │                                                       │
          │ OpenAI-compatible API call                            │
-         │ model: Qwen3-Coder-Next-MLX-6bit                     │
-         │ maxSteps: 5                                          │
+         │ maxSteps: 5                                           │
+         │ Allow List Check                                      │
+         │                                                       │
          ▼
 ┌────────────────────────────────────────────────────────────────────┐
-│                    localhost:8080/v1                               │
-│               (MLX Local LLM Server)                              │
-│            Qwen3-Coder-Next-MLX-6bit model                        │
+│                    LLM via URL                                     │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -77,12 +76,12 @@ graph TB
     subgraph Server
         API["app/api/chat/route.ts"]
         GenText["generateText()"]
-        Model["Qwen3-Coder-Next-MLX-6bit"]
+        Model["Some-LLM-Model"]
         BashTool["bash Tool"]
     end
     
     subgraph LocalLLM
-        MLX["localhost:8080/v1"]
+        LLM["OpenAI-compatible"]
     end
     
     subgraph Shell
@@ -96,10 +95,11 @@ graph TB
     API --> GenText
     GenText --> Model
     GenText --"tool call"--> BashTool
-    BashTool --"execute"--> Cmd
+    BashTool --"check allowed"--> AllowList["Allow List Check"]
+    AllowList --"permitted"--> Cmd
     Cmd --"stdout/stderr"--> BashTool
-    Model --"inference"--> MLX
-    MLX --"response"--> Model
+    Model --"inference"--> LLM
+    LLM --"response"--> Model
 ```
 
 ---
@@ -149,7 +149,7 @@ Key exports:
 
 Configuration:
   - localProvider: createOpenAICompatible()
-  - model: Qwen3-Coder-Next-MLX-6bit
+  - model: ModelName
   - tools: { bash }
   - maxSteps: 5
 ```
@@ -176,21 +176,21 @@ Features:
 
 ```ts
 const localProvider = createOpenAICompatible({
-  name: 'local-llm',
-  baseURL: 'http://localhost:8080/v1',
-  apiKey: 'omlx-om5hh4rsln2h3f8w',
+  name: 'provider-name',
+  baseURL: 'baseUrl',
+  apiKey: 'example',
 });
 
-const model = localProvider('Qwen3-Coder-Next-MLX-6bit', {
+const model = localProvider('modelName', {
   maxRetries: 0,
 });
 ```
 
 | Setting | Value |
 |---------|-------|
-| **Model** | `Qwen3-Coder-Next-MLX-6bit` |
-| **Base URL** | `http://localhost:8080/v1` |
-| **API Key** | `omlx-om5hh4rsln2h3f8w` |
+| **Model** | `modelName` |
+| **Base URL** | `baseUrl` |
+| **API Key** | `example` |
 | **Provider Type** | `openai-compatible` |
 | **Max Retries** | `0` (no retries) |
 
@@ -223,6 +223,10 @@ const bashTool = tool({
 | **Captured Output** | `stdout`, `stderr`, `error` |
 | **maxSteps** | 5 (multi-step reasoning) |
 
+### Allow List Filtering
+
+The bash tool enforces an allow list that restricts which commands can be executed. Before running a command, the tool checks if the base command (first word) is in the allow list.
+
 ### Return Types
 
 ```ts
@@ -239,6 +243,28 @@ const bashTool = tool({
   stderr: string   // Trimmed
 }
 ```
+
+---
+
+## Command Allow List
+
+### Default Allow List
+
+By default, the allow list includes:
+- `ls` - List directory contents
+- `pwd` - Print working directory
+
+### User Editable
+
+Users can modify the allow list through the web app UI:
+- **Add commands**: Enter a new command to add it to the list
+- **Remove commands**: Click the remove button next to any command
+
+### Allow All Mode
+
+A toggle setting enables "Allow All" mode:
+- **Enabled**: The allow list is ignored; any command the LLM generates will execute
+- **Disabled**: Only commands in the allow list are permitted
 
 ---
 
@@ -323,6 +349,7 @@ Access at `http://localhost:3000`
 3. **API Route** calls `generateText()` with prompt + bash tool
 4. **LLM** processes prompt, may call bash tool (up to 5 steps)
 5. **Bash Tool** executes command via `execAsync()` (30s timeout)
+   - **Allow List Check** verifies the base command is permitted (or "Allow All" is enabled)
 6. **API Route** returns `{ text, toolOutputs[] }`
 7. **Client** displays response text and tool output cards
 
@@ -330,6 +357,7 @@ Access at `http://localhost:3000`
 
 ## Future Considerations
 
+- Allow list enhancements: wildcard patterns (`ls*`), regex matching, per-session settings, shared team defaults
 - Add streaming responses via `useChat` hook
 - Support multi-turn conversation history
 - Add request/response logging
