@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-A minimal chat interface that connects to a OpenAI-compatible LLM  with bash execution capabilities. The app allows users to send prompts and receive responses, with the LLM able to invoke a `bash` tool to execute shell commands.
+A minimal chat interface that connects to a OpenAI-compatible LLM with bash execution capabilities. The app allows users to send prompts and receive responses, with the LLM able to invoke a `bash` tool to execute shell commands.
 
 ---
 
@@ -31,27 +31,27 @@ A minimal chat interface that connects to a OpenAI-compatible LLM  with bash exe
 │              app/api/chat/route.ts                          │
 │                                                             │
 │  ┌─────────────────┐    ┌───────────────────────────────┐   │
-│  │ generateText()  │───▶│ bash Tool (via ai SDK)       │   │
-│  │                 │    │  - Zod schema                │   │
-│  │  ┌────────────┐ │    │  - execAsync(cmd, timeout)   │   │
-│  │  │   prompt   │ │    │  - 30s timeout              │   │
-│  │  └────────────┘ │    │  - returns stdout/stderr     │   │
-│  │        │        │    └───────────────────────────────┘   │
-│  │        │           ▲                            │         │
-│  │        └───────────┼────────────────────────────┘         │
+│  │ createReactAgent│───▶│ bash Tool (via langchain/core)│   │
+│  │ + agent.invoke()│    │  - zod input schema          │   │
+│  │                 │    │  - execAsync(cmd, timeout)   │   │
+│  │  ┌────────────┐ │    │  - 30s timeout              │   │
+│  │  │   prompt   │ │    │  - returns stdout/stderr     │   │
+│  │  └────────────┘ │    └───────────────────────────────┘   │
+│  │        │        │    ▲                            │      │
+│  │        └─────────┼────────────────────────────┘         │
 │  │            │       │                                     │
 │  │            ▼       │                                     │
 │  │  ┌──────────────┐  │                                     │
 │  │  │  Return JSON │◀─┼─────────────────────────────────────┤
 │  │  │  - text      │  │                                     │
-│  │  │  - toolOutputs──┘                                │      │
+│  │  │  - toolCalls────┘                                │      │
 │  │  └──────────────┘                                   │      │
 │  └─────────────────┘                                   │      │
 │        │                                               │      │
 └────────┼────────────────────────────────────────────────┘      │
          │                                                       │
          │ OpenAI-compatible API call                            │
-         │ maxSteps: 5                                           │
+         │ max_iterations: 5                                     │
          │ Allow List Check                                      │
          │                                                       │
          ▼
@@ -75,7 +75,7 @@ graph TB
     
     subgraph Server
         API["app/api/chat/route.ts"]
-        GenText["generateText()"]
+        Agent["createReactAgent + invoke()"]
         Model["Some-LLM-Model"]
         BashTool["bash Tool"]
     end
@@ -92,9 +92,9 @@ graph TB
     Page --> Response
     Page --> ToolCards
     Page --"POST /api/chat"--> API
-    API --> GenText
-    GenText --> Model
-    GenText --"tool call"--> BashTool
+    API --> Agent
+    Agent --> Model
+    Agent --"tool call"--> BashTool
     BashTool --"check allowed"--> AllowList["Allow List Check"]
     AllowList --"permitted"--> Cmd
     Cmd --"stdout/stderr"--> BashTool
@@ -110,8 +110,9 @@ graph TB
 |-------|------------|---------|
 | **Framework** | Next.js | 16.2.10 (App Router) |
 | **UI** | React | 19.2.4 |
-| **AI SDK** | Vercel AI SDK | 7.0.34 |
-| **Provider** | @ai-sdk/openai-compatible | 3.0.14 |
+| **AI Framework** | LangChain.js | 0.3.x |
+| **Core** | @langchain/core | 0.3.x |
+| **Provider** | @langchain/openai | 0.3.x |
 | **Validation** | Zod | 3.25.0 |
 | **Styling** | Tailwind CSS | v4 |
 | **Type Safety** | TypeScript | 5.x |
@@ -144,14 +145,19 @@ send():
 **Purpose**: Orchestrate LLM inference and tool execution
 
 ```tsx
+Key imports:
+  - ChatOpenAI from @langchain/openai
+  - { createReactAgent } from "@langchain/langgraph"
+  - { ToolMessage, AIMessage } from "@langchain/core/messages"
+  - { z } from "zod"
+
 Key exports:
   - POST(req: NextRequest)
 
 Configuration:
-  - localProvider: createOpenAICompatible()
-  - model: ModelName
-  - tools: { bash }
-  - maxSteps: 5
+  - model: ChatOpenAI with openai-compatible baseURL
+  - tools: [bashTool]
+  - maxIterations: 5
 ```
 
 ### `app/globals.css`
@@ -175,14 +181,13 @@ Features:
 ## LLM Configuration
 
 ```ts
-const localProvider = createOpenAICompatible({
-  name: 'provider-name',
-  baseURL: 'baseUrl',
+const model = new ChatOpenAI({
+  modelName: 'modelName',
+  baseUrl: 'baseUrl',
   apiKey: 'example',
-});
-
-const model = localProvider('modelName', {
-  maxRetries: 0,
+  configuration: {
+    maxRetries: 0,
+  },
 });
 ```
 
@@ -191,10 +196,11 @@ const model = localProvider('modelName', {
 | **Model** | `modelName` |
 | **Base URL** | `baseUrl` |
 | **API Key** | `example` |
-| **Provider Type** | `openai-compatible` |
+| **Provider Type** | OpenAI-compatible (via `@langchain/openai`) |
 | **Max Retries** | `0` (no retries) |
 
 Configuration data is persisted to a file called llm-config.json
+
 ---
 
 ## Bash Tool Design
@@ -202,17 +208,24 @@ Configuration data is persisted to a file called llm-config.json
 ### Schema Definition
 
 ```ts
-const bashTool = tool({
-  description: `Execute a bash command on the server. You MUST provide a "command" 
+import { z } from "zod";
+import { Tool } from "@langchain/core/tools";
+
+class BashTool extends Tool {
+  name = "bash";
+  description = `Execute a bash command on the server. You MUST provide a "command" 
   parameter with the exact shell command to run. This is the ONLY way to run 
-  commands. For example: command="pwd", command="ls -la", command="npm run build".`,
+  commands. For example: command="pwd", command="ls -la", command="npm run build".`;
   
-  parameters: z.object({
+  schema = z.object({
     command: z.string().describe('The bash/shell command to execute'),
-  }),
+  });
   
-  execute: async ({ command }) => { ... }
-});
+  async _call(input: z.infer<typeof this.schema>): Promise<string> {
+    const { command } = input;
+    // ... execute and return result
+  }
+}
 ```
 
 ### Execution Configuration
@@ -222,7 +235,7 @@ const bashTool = tool({
 | **Command Runner** | `child_process.exec` (promisified) |
 | **Timeout** | 30,000 ms (30 seconds) |
 | **Captured Output** | `stdout`, `stderr`, `error` |
-| **maxSteps** | 5 (multi-step reasoning) |
+| **maxIterations** | 5 (multi-step reasoning) |
 
 ### Allow List Filtering
 
@@ -230,19 +243,21 @@ The bash tool enforces an allow list that restricts which commands can be execut
 
 ### Return Types
 
+LangChain tools return a **string** that gets wrapped in a `ToolMessage`. The string representation:
+
 ```ts
-// Success
-{
+// Success (returned as string)
+JSON.stringify({
   stdout: string,  // Trimmed
   stderr: string   // Trimmed
-}
+})
 
-// Error
-{
+// Error (returned as string)
+JSON.stringify({
   error: string,   // Error message
   stdout: string,  // Trimmed (may be partial)
   stderr: string   // Trimmed
-}
+})
 ```
 
 ---
@@ -277,21 +292,35 @@ A toggle setting enables "Allow All" mode:
 - **Server** (`api/chat/route.ts`): Holds API key, makes LLM calls
 - **Benefit**: API key never exposed to browser
 
-### 2. Vercel AI SDK Tool Calling
+### 2. LangChain Agent Pattern
 
 ```tsx
-generateText({
-  model,
-  prompt,
-  tools: { bash: bashTool },
-  maxSteps: 5,  // Allows up to 5 tool call/response cycles
-})
+const agent = createReactAgent({
+  llm: model,
+  tools: [bashTool],
+  checkpointSaver: new MemorySaver(),  // or SqliteSaver / PostgresSaver
+  messageWriter: StdOut,  // optional
+});
+
+const result = await agent.invoke({
+  messages: [new HumanMessage(prompt)],
+}, {
+  configurable: {
+    thread_id: "chat-session-id",
+  },
+});
 ```
+
+**Key differences from Vercel AI SDK**:
+- LangGraph agents use checkpointing for state persistence across steps
+- Messages are explicit `HumanMessage`/`AIMessage`/`ToolMessage` objects
+- `createReactAgent` provides ReAct-style reasoning with tool use
+- `maxIterations` limits the number of tool call/response cycles
 
 ### 3. Tool Output Visualization
 
 ```tsx
-toolOutputs[].result:
+result.messages[].toolCalls[]:
   ├─ stdout → Green-tinted card with dark terminal background
   ├─ stderr → Red-tinted card for error streams
   └─ error  → Inline error message (execution failed)
@@ -304,8 +333,9 @@ toolOutputs[].result:
 ```json
 {
   "dependencies": {
-    "@ai-sdk/openai-compatible": "^3.0.14",
-    "ai": "^7.0.34",
+    "@langchain/core": "^0.3.x",
+    "@langchain/langgraph": "^0.2.x",
+    "@langchain/openai": "^0.3.x",
     "zod": "^3.25.0",
     "next": "16.2.10",
     "react": "19.2.4",
@@ -347,21 +377,39 @@ Access at `http://localhost:3000`
 
 1. **User** types prompt and clicks Send
 2. **Client** sends `POST /api/chat` with `{ prompt }`
-3. **API Route** calls `generateText()` with prompt + bash tool
-4. **LLM** processes prompt, may call bash tool (up to 5 steps)
-5. **Bash Tool** executes command via `execAsync()` (30s timeout)
+3. **API Route** creates a LangGraph agent via `createReactAgent()` with the LLM + bash tool
+4. **Agent** invokes the LLM with the user's prompt
+5. **LLM** processes prompt, may call bash tool (up to 5 iterations)
+6. **Bash Tool** executes command via `execAsync()` (30s timeout)
    - **Allow List Check** verifies the base command is permitted (or "Allow All" is enabled)
-6. **API Route** returns `{ text, toolOutputs[] }`
-7. **Client** displays response text and tool output cards
+7. **Agent** collects tool results and continues until final answer
+8. **API Route** returns `{ text, toolOutputs[] }` extracted from agent messages
+9. **Client** displays response text and tool output cards
 
 ---
 
 ## Future Considerations
 
-- Allow list enhancements: wildcard patterns (`ls*`), regex matching, per-session settings, shared team defaults
-- Add streaming responses via `useChat` hook
-- Support multi-turn conversation history
+- Checkpoint persistence: Swap `MemorySaver` for `SqliteSaver` or `PostgresSaver` for thread-safe state
+- Add streaming responses via `StreamEvents` from `@langchain/core/messages`
+- Support multi-turn conversation history with LangGraph checkpointing
 - Add request/response logging
 - Configure environment variables for API credentials
 - Add loading states for individual tool calls
-- Support streaming tool outputs
+- Support streaming tool outputs via SSE
+- Add team-based allow list defaults via shared state
+
+---
+
+## LangChain vs Vercel AI SDK: Key Mapping
+
+| Vercel AI SDK | LangChain.js Equivalent |
+|---------------|------------------------|
+| `createOpenAICompatible()` | `new ChatOpenAI({ baseUrl, apiKey, modelName })` |
+| `generateText()` | `createReactAgent().invoke()` |
+| `tool({ parameters, execute })` | `class extends Tool { schema, _call() }` |
+| `maxSteps: 5` | `maxIterations: 5` |
+| Tool result as object | Tool result as JSON string (wrapped in `ToolMessage`) |
+| Built-in streaming (`useChat`) | Manual SSE + `StreamEvents` |
+| Auto message history | Explicit `HumanMessage`/`AIMessage` management |
+| Memory state | `MemorySaver` / `CheckpointSaver` |
