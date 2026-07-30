@@ -1,0 +1,109 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Next.js
+.next/
+out/
+build/
+.next
+dist/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.settings/
+.classpath
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Python virtual environments
+venv/
+env/
+.venv/
+env.bak/
+.venv.bak/
+
+# Pyenv
+.python-version
+
+# pytest
+.pytest_cache/
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyright
+.pyrightcache/
+
+# Flow
+.flowconfig/
+
+# Nuxt.js
+.nuxt/
+
+# Gatsby
+.cache/
+.public/
+
+# Jest
+.jest/
+
+# Babel
+.babelrc
+
+# Misc
+.sass-cache/
+*.log
