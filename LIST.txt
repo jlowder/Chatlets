@@ -1,4 +1,4 @@
-[ ] agno
+[x] agno
 [ ] crewai
 [ ] langchain
 [ ] langgraph

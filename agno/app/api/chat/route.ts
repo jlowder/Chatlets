@@ -1,44 +1,27 @@
 import { NextResponse } from 'next/server';
 
 /**
- * API Route that proxies to the Python Agno Agent Service.
- * The agno agent logic runs in a separate Flask service on port 8081.
- * 
+ * API proxy to Agno Flask agent service.
+ * Forwards to http://localhost:8081/chat (Flask endpoint).
+ *
  * Usage:
- *   1. Start agent service: python agent_service.py  (or npm run agent)
- *   2. Start Next.js: npm run dev
+ *   1. Start agent service: npm run agent  (or npm run dev:all)
+ *   2. Start proxy:        npm run dev
  */
-
-const AGENT_SERVICE_URL = process.env.AGENT_SERVICE_URL || 'http://localhost:8081';
-
-export async function POST(request: Request) {
+export async function POST(req: Request) {
   try {
-    const { prompt } = await request.json();
-    if (!prompt) {
-      return NextResponse.json({ error: 'Missing prompt' }, { status: 400 });
-    }
-
-    const res = await fetch(`${AGENT_SERVICE_URL}/chat`, {
+    const body = await req.json();
+    const res = await fetch('http://localhost:8081/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify(body),
     });
-
     const data = await res.json();
-
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: data.error ?? 'Agent service error', text: '', toolOutputs: [] },
-        { status: res.status }
-      );
-    }
-
-    return NextResponse.json(data);
-  } catch (e: any) {
-    console.error('API route error:', e);
+    return NextResponse.json(data, { status: res.status });
+  } catch {
     return NextResponse.json(
-      { error: e.message ?? 'Internal error', text: '', toolOutputs: [] },
-      { status: 500 }
+      { error: 'Failed to connect to Agno agent service' },
+      { status: 502 }
     );
   }
 }
