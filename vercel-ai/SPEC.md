@@ -356,6 +356,86 @@ Access at `http://localhost:3000`
 
 ---
 
+## UI Behavior
+
+### Autoscroll Behavior
+
+- Uses `useLayoutEffect` + `setTimeout(..., 0)` pattern to autoscroll chat to bottom
+- Triggers on changes to `messages` array or `loading` state (dependency: `[messages, loading]`)
+- Scrolls by directly setting `container.scrollTop = container.scrollHeight`
+- This is a **hard jump** — no smooth scrolling animation
+- **Unconditionally** scrolls user back to bottom even if they scrolled up mid-conversation
+- No scroll preservation or intersection observer for smart scrolling
+
+```tsx
+useLayoutEffect(() => {
+  setTimeout(() => {
+    const container = chatRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, 0);
+}, [messages, loading]);
+```
+
+### Chat Container Styling
+
+- Class: `flex-1 min-h-0 overflow-y-auto px-8 py-6 pb-20 space-y-6`
+- `flex-1 min-h-0` — flex growth with proper shrink behavior in parent flex column
+- `overflow-y-auto` — enables vertical scrolling
+- `px-8 py-6` — padding around message content
+- `pb-20` — bottom padding so content isn't hidden behind the sticky input bar
+- `space-y-6` — vertical spacing between message blocks
+
+### Input Bar Behavior
+
+- `sticky bottom-0` keeps input bar fixed at bottom of chat card
+- Positioned with `border-t`, `bg`, and padding for visual separation
+- Has `data-input-bar` attribute (useful for testing/selector targeting)
+- Always visible above the footer, overlaying chat content at the bottom
+
+### Typing Indicator Animation
+
+Three dots with staggered `animate-bounce` from Tailwind CSS:
+- Animation delays: **0ms**, **150ms**, **300ms** (via inline `style` prop)
+- Dot size: `w-2 h-2 rounded-full`
+- Color varies by theme: `bg-zinc-500` (dark) / `bg-zinc-400` (light)
+
+```tsx
+function TypingIndicator({ dark }: { dark: boolean }) {
+  const dotColor = dark ? 'bg-zinc-500' : 'bg-zinc-400';
+  return (
+    <div className="flex items-center gap-1">
+      <span className={`w-2 h-2 rounded-full ${dotColor} animate-bounce`} style={{ animationDelay: '0ms' }} />
+      <span className={`w-2 h-2 rounded-full ${dotColor} animate-bounce`} style={{ animationDelay: '150ms' }} />
+      <span className={`w-2 h-2 rounded-full ${dotColor} animate-bounce`} style={{ animationDelay: '300ms' }} />
+    </div>
+  );
+}
+```
+
+### Other UI Effects
+
+| Element | Transition / Effect |
+|---------|---------------------|
+| Dark mode toggle button | `transition-colors` on button |
+| Input textarea | `transition-shadow` on focus (ring animation) |
+| Send button | `transition-all` + `active:scale-[0.98]` press feedback |
+| Send button (disabled) | `disabled:opacity-40 disabled:cursor-not-allowed` |
+
+---
+
+## Notes on Scrolling
+
+- **No smooth scrolling** — hard jump via direct `scrollTop` assignment
+- **No scroll preservation** — user is always scrolled to bottom on new messages
+- **No `scrollIntoView`** with `behavior: 'smooth'`
+- **No intersection observer** or smart scroll detection
+- The `useLayoutEffect` + `setTimeout(..., 0)` pattern is used to defer the scroll to the next paint after React has committed the DOM updates
+- Test files exist (`test-scroll.mjs`, `test-scroll2.mjs`) suggesting scroll behavior was previously tested/investigated
+
+---
+
 ## Future Considerations
 
 - Allow list enhancements: wildcard patterns (`ls*`), regex matching, per-session settings, shared team defaults

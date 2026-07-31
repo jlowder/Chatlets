@@ -510,6 +510,43 @@ Access at `http://localhost:3000`
 
 ---
 
+## UI Behavior
+
+### Autoscroll Behavior
+- Uses `useLayoutEffect` + `setTimeout(..., 0)` pattern to autoscroll chat to bottom
+- Triggers on changes to `messages` array or `loading` state
+- Scrolls by setting `container.scrollTop = scrollHeight`
+- This is a hard jump (no smooth scrolling animation)
+- Unconditionally scrolls user back to bottom even if they scrolled up mid-conversation
+- No scroll preservation or intersection observer for smart scrolling
+
+### Chat Container Styling
+- `flex-1 min-h-0 overflow-y-auto px-8 py-6 pb-20 space-y-6`
+- `overflow-y-auto` enables scrolling
+- `pb-20` provides bottom padding so content isn't hidden behind the sticky input bar
+
+### Input Bar Behavior
+- `sticky bottom-0` keeps input bar fixed at bottom of chat card
+- Has `data-input-bar` attribute
+
+### Typing Indicator Animation
+- Three dots with staggered `animate-bounce` (Tailwind CSS)
+- Animation delays: 0ms, 150ms, 300ms
+
+### Other UI Effects
+- Dark mode toggle: `transition-colors` on button
+- Input field: `transition-shadow` on focus
+- Send button: `transition-all` + `active:scale-[0.98]` press feedback
+- Send button disabled state: `disabled:opacity-40`
+
+### Notes on Scrolling
+- No `smooth` scrolling — hard jump via direct scrollTop assignment
+- No scroll preservation — user is always scrolled to bottom on new messages
+- No `scrollIntoView` with `behavior: 'smooth'`
+- No intersection observer or smart scroll detection
+
+---
+
 ## Future Considerations
 
 - **Structured output**: Set `output_type=MyResponseModel` (Pydantic model) for type-safe structured responses
