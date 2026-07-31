@@ -1,10 +1,12 @@
-# Simple LLM Chat Interface
+# Chatlets — smolagents Backend
+
+> **Note:** This is a **backend-only** implementation. The shared frontend (in `shared/`) provides the chat UI for all Chatlets. See [vercel-ai/SPEC.md](../vercel-ai/SPEC.md) for the full architecture.
+
+---
 
 ## Project Overview
 
-A minimal chat interface that connects to a OpenAI-compatible LLM with bash execution capabilities. The app allows users to send prompts and receive responses, with the LLM able to invoke a `bash` tool to execute shell commands.
-
-Built with smolagents' code-first paradigm — a `CodeAgent` generates Python code snippets to invoke tools and solve tasks. Tools are registered via `@tool` decorator or by subclassing `Tool`. The agent executes its generated code locally or in a sandbox, returning results via `final_answer()`.
+A minimal chat backend that connects to an OpenAI-compatible LLM with bash execution capabilities using smolagents' code-first paradigm. A `CodeAgent` generates Python code snippets to invoke tools and solve tasks. Tools are registered via `@tool` decorator or by subclassing `Tool`. The agent executes its generated code locally (safe by default) or in a sandbox, returning results via `final_answer()`.
 
 ---
 
@@ -12,35 +14,32 @@ Built with smolagents' code-first paradigm — a `CodeAgent` generates Python co
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    User Browser                              │
+│              Shared Frontend (shared/)                     │
 │                                                             │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │              app/page.tsx (Client)                    │  │
-│  │  ┌─────────────┐       ┌──────────────┐              │  │
-│  │  │   Input     │──────▶│   Response   │              │  │
-│  │  │   Text +    │       │   Text Area  │              │  │
-│  │  │   Button    │       └──────────────┘              │  │
-│  │  └─────────────┘                                     │  │
-│  │        │                                             │  │
-│  │        │ fetch POST /api/chat                        │  │
-│  │        ▼                                             │  │
+│  │  Chat UI: input + response + tool output cards       │  │
 │  └───────────────────────────────────────────────────────┘  │
+│        │                                                    │
+│        │ fetch POST /api/chat                               │
+│        ▼                                                    │
+│  next.config.mjs (CHATLET_BACKEND=smolagents)               │
+│  rewrites → smolagents backend on :5000                    │
 └─────────────────────────────────────────────────────────────┘
                         │
-                        │ HTTP POST
+                        │ HTTP POST /api/chat { prompt }
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              app/api/chat/route.ts                          │
+│              smolagents backend (port 5000)                │
 │                                                             │
 │  ┌─────────────────┐    ┌───────────────────────────────┐   │
 │  │ CodeAgent.run() │───▶│ bash Tool (@tool decorated)  │   │
 │  │                 │    │  - Python function           │   │
-│  │                 │    │  - execAsync(cmd, timeout)   │   │
-│  │  ┌────────────┐ │    │  - 30s timeout              │   │
-│  │  │   prompt   │ │    │  - returns stdout/stderr     │   │
-│  │  └────────────┘ │    └───────────────────────────────┘   │
-│  │        │        │    ▲                            │      │
-│  │        └─────────┼────────────────────────────┘         │
+│  │  ┌────────────┐ │    │  - subprocess.run(timeout)   │   │
+│  │  │   prompt   │ │    │  - 30s timeout              │   │
+│  │  └────────────┘ │    │  - returns stdout/stderr     │   │
+│  │        │        │    └───────────────────────────────┘   │
+│  │        │           ▲                            │         │
+│  │        └───────────┼────────────────────────────┘         │
 │  │            │       │                                     │
 │  │            ▼       │                                     │
 │  │  ┌──────────────┐  │                                     │
@@ -52,67 +51,39 @@ Built with smolagents' code-first paradigm — a `CodeAgent` generates Python co
 │        │                                               │      │
 └────────┼────────────────────────────────────────────────┘      │
          │                                                       │
-         │ OpenAI-compatible API call                            │
+         │ OpenAI-compatible API call via LiteLLM                │
          │ max_steps: 30 (default)                               │
          │ Allow List Check                                      │
          │                                                       │
          ▼
 ┌────────────────────────────────────────────────────────────────────┐
-│                    LLM via URL                                     │
+│                    LLM via URL (LiteLLM)                           │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Mermaid Architecture Diagram
+## API Endpoints
 
-```mermaid
-graph TB
-    subgraph Browser
-        Page["app/page.tsx (Client)"]
-        Input["Input + Send Button"]
-        Response["Response Text Area"]
-        ToolCards["Tool Output Cards"]
-    end
-    
-    subgraph Server
-        API["app/api/chat/route.ts"]
-        
-        subgraph smolagents
-            Agent["CodeAgent Definition"]
-            Model["Model"]
-            CodeGen["Code Generation"]
-            CodeExec["Code Execution"]
-        end
-        
-        BashTool["@tool bash_tool"]
-    end
-    
-    subgraph LocalLLM
-        LLM["OpenAI-compatible"]
-    end
-    
-    subgraph Shell
-        Cmd["execAsync"]
-    end
-    
-    Input --> Page
-    Page --> Response
-    Page --> ToolCards
-    Page --"POST /api/chat"--> API
-    API --> Agent
-    Agent --> CodeGen
-    CodeGen --> Model
-    Model --> LLM
-    LLM --> Model
-    Model --> CodeExec
-    CodeExec --> BashTool
-    BashTool --"check allowed"--> AllowList["Allow List Check"]
-    AllowList --"permitted"--> Cmd
-    Cmd --"stdout/stderr"--> BashTool
-    CodeExec --> Agent
-    Agent --> API
-```
+### `POST /api/chat`
+
+| Property | Value |
+|----------|-------|
+| **Content-Type** | `application/json` |
+| **Request Body** | `{ prompt: string }` |
+| **Success Response** | `{ text: string, toolOutputs: { stdout?: string, stderr?: string, error?: string }[] }` |
+| **Error Response** | `{ error: string }` |
+
+---
+
+## API Contract
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `prompt` | `string` | Yes | User's chat message |
+| `text` | `string` | Yes | LLM response text |
+| `toolOutputs` | `object[]` | No | Array of bash tool execution results |
+| `error` | `string` | No | Error message if request fails |
 
 ---
 
@@ -120,42 +91,22 @@ graph TB
 
 | Layer | Technology | Version |
 |-------|------------|---------|
-| **Framework** | Next.js | 16.2.10 (App Router) |
-| **UI** | React | 19.2.4 |
 | **Agent Framework** | smolagents (Hugging Face) | 1.x |
+| **LLM Provider** | LiteLLM | 1.x |
 | **Validation** | Pydantic | 2.x |
-| **Styling** | Tailwind CSS | v4 |
-| **Type Safety** | TypeScript | 5.x |
-| **Fonts** | Geist Sans/Mono | (via Tailwind v4) |
+| **Type Safety** | TypeScript | 5.x (for proxy/API layer) |
 
 ---
 
 ## Key Components
 
-### `app/page.tsx`
+### `app/api/chat/route.ts` (or `agent_service.py` equivalent)
 
-**Type**: Client Component (`'use client'`)  
-**Purpose**: Chat UI with input, response display, and tool output visualization
-
-```tsx
-useState hooks:
-  - prompt: Input field value
-  - response: LLM response text
-  - toolOutputs: Array of bash tool execution results
-  - loading: Button/input disabled state
-
-send():
-  - POST to /api/chat with { prompt }
-  - Update response and toolOutputs on success
-```
-
-### `app/api/chat/route.ts`
-
-**Type**: Server API Route (POST)  
+**Type**: API Route (POST)  
 **Purpose**: Orchestrate LLM inference via a smolagents CodeAgent
 
-```tsx
-Key imports (Python):
+```python
+Key imports:
   - CodeAgent from smolagents
   - LiteLLMModel from smolagents.models
 
@@ -169,20 +120,38 @@ Configuration:
   - run(): agent.run(prompt) → string output
 ```
 
-### `app/globals.css`
+### CodeAgent Definition
 
-**Type**: Global Styles  
-**Purpose**: Tailwind v4 setup with system theme detection
+**Type**: Python class (`CodeAgent`)  
+**Purpose**: Code-generating agent that writes Python to invoke tools
 
-```css
-Tailwind v4 syntax:
-  @import "tailwindcss"
-  @theme inline { ... }
+```python
+from smolagents import CodeAgent, LiteLLMModel
 
-Features:
-  - System color scheme detection (light/dark)
-  - CSS custom properties for theming
-  - Geist font family configuration
+agent = CodeAgent(
+    tools=[bash_tool],
+    model=model,
+    max_steps=30,
+    additional_authorized_imports=["json", "subprocess"],
+)
+```
+
+### Bash Tool
+
+**Type**: Python function decorated with `@tool`  
+**Purpose**: Turn a Python function into an agent-accessible tool
+
+```python
+from smolagents import tool
+
+@tool
+def bash_tool(command: str) -> str:
+    """Execute a bash command on the server.
+    
+    Args:
+        command: The bash/shell command to execute
+    """
+    # ... implementation ...
 ```
 
 ---
@@ -207,7 +176,7 @@ model = LiteLLMModel(
 | **Provider Type** | OpenAI-compatible (via LiteLLM) |
 | **Max Tokens** | Model-dependent |
 
-Configuration data is persisted to a file called llm-config.json
+Configuration data is persisted to a file called `llm-config.json`.
 
 ---
 
@@ -308,12 +277,12 @@ json.dumps({
 ### Default Allow List
 
 By default, the allow list includes:
-- `ls` - List directory contents
-- `pwd` - Print working directory
+- `ls` — List directory contents
+- `pwd` — Print working directory
 
 ### User Editable
 
-Users can modify the allow list through the web app UI:
+Users can modify the allow list through the shared frontend UI:
 - **Add commands**: Enter a new command to add it to the list
 - **Remove commands**: Click the remove button next to any command
 
@@ -325,15 +294,15 @@ A toggle setting enables "Allow All" mode:
 
 ---
 
-## Design Patterns
+## Agent Architecture
 
-### 1. Client-Server Separation
+### Code Generation Loop
 
-- **Client** (`page.tsx`): UI-only, no API credentials
-- **Server** (`api/chat/route.ts`): Holds API key, makes LLM calls
-- **Benefit**: API key never exposed to browser
+smolagents `CodeAgent` uses a code-first paradigm — it generates Python code snippets to invoke tools:
 
-### 2. smolagents CodeAgent Pattern
+```
+User prompt → LLM generates Python code → Execute code → Observe output → Repeat → final_answer()
+```
 
 ```python
 from smolagents import CodeAgent, LiteLLMModel, tool
@@ -418,23 +387,134 @@ result = agent.run(prompt)
 - `final_answer_checks=[validator_func]` — list of validation functions that check the final answer
 - `agent.logs` — fine-grained logs of each step (each step stored as a dict)
 - `agent.write_memory_to_messages()` — returns chat message history for the model
-- **Code execution** — generated Python code is executed locally (safe by default) or in a sandbox (`executor_type="docker"`, `"e2b"`, `"blaxel"`)
-- **Import safety** — Python interpreter doesn't allow imports outside a safe list by default; `additional_authorized_imports` extends this
-- **Multi-agent** — pass `managed_agents=[...]` to create hierarchical multi-agent systems
-- **Sub-agents** — agents with `name` and `description` attributes can be managed by a parent agent
-- **Push to Hub** — `agent.push_to_hub("user/agent-name")` to share agents
-- **Load from Hub** — `CodeAgent.from_hub("user/agent-name", trust_remote_code=True)` to load shared agents
-- **GradioUI** — `GradioUI(agent).launch()` for interactive chat with visualization
 
-### 3. Tool Output Visualization
+### Code Execution
+
+Generated Python code is executed in a safe environment:
+
+- **Local execution** (default): Code runs in the same Python process with import restrictions
+- **Sandboxed execution**: Use `executor_type="docker"`, `"e2b"`, or `"blaxel"` for isolated execution
+- **Import safety**: Python interpreter doesn't allow imports outside a safe list by default; `additional_authorized_imports` extends this
+
+### Final Answer
+
+The agent calls `final_answer(value)` to return its result:
 
 ```python
-# From agent.logs or write_memory_to_messages():
-step.tool_output:
-  ├─ stdout → Green-tinted card with dark terminal background
-  ├─ stderr → Red-tinted card for error streams
-  └─ error  → Inline error message (execution failed)
+from smolagents import final_answer
+
+@tool
+def bash_tool(command: str) -> str:
+    """Execute a bash command and return the result."""
+    # ... execute command ...
+    return final_answer(result_content)
 ```
+
+Validation functions can be attached:
+
+```python
+def validate_answer(value: str) -> bool:
+    return len(value) > 0
+
+agent = CodeAgent(
+    tools=[bash_tool],
+    model=model,
+    final_answer_checks=[validate_answer],
+)
+```
+
+### Managed Agents
+
+smolagents supports hierarchical multi-agent systems:
+
+```python
+researcher = CodeAgent(
+    tools=[web_search_tool],
+    model=model,
+    name="researcher",
+    description="Searches the web for information.",
+)
+
+agent = CodeAgent(
+    tools=[bash_tool],
+    model=model,
+    managed_agents=[researcher],
+)
+```
+
+Sub-agents with `name` and `description` attributes can be managed by a parent agent.
+
+---
+
+## Hub Integration
+
+### Push to Hub
+
+Share agents with the Hugging Face Hub:
+
+```python
+agent.push_to_hub("user/agent-name")
+```
+
+### Load from Hub
+
+Load shared agents:
+
+```python
+agent = CodeAgent.from_hub("user/agent-name", trust_remote_code=True)
+```
+
+---
+
+## GradioUI Note
+
+smolagents includes a built-in Gradio UI for interactive chat:
+
+```python
+from smolagents import GradioUI
+
+GradioUI(agent).launch()
+```
+
+**Note for Chatlets**: This backend is **backend-only**. The shared frontend (`shared/`) provides the chat UI. GradioUI is available for development/testing but not used in production.
+
+---
+
+## Design Patterns
+
+### 1. Backend-Only API
+
+- **API Route** (`api/chat/route.ts`): Holds API key, makes LLM calls
+- **Benefit**: API key never exposed to browser
+- The shared frontend communicates via a standardized `POST /api/chat` contract
+
+### 2. smolagents CodeAgent Pattern
+
+```python
+agent = CodeAgent(
+    tools=[bash_tool],
+    model=model,
+    max_steps=30,
+    additional_authorized_imports=["json", "subprocess"],
+)
+
+result = agent.run(prompt)
+# result is a string (the final_answer output)
+```
+
+**Key differences from other frameworks**:
+- Code-first paradigm: agent writes Python code to invoke tools (not JSON tool calls)
+- Simpler API: just `agent.run(prompt)` — no explicit graph or state management
+- Sandbox execution: generated code runs safely (local or Docker/E2B)
+- Hub integration: push/load agents from Hugging Face Hub
+- GradioUI: built-in interactive UI for development
+
+### 3. Tool Output Structure
+
+Tool results are extracted from `agent.logs` or `agent.write_memory_to_messages()`:
+- `stdout` — green-tinted output card with dark terminal background
+- `stderr` — red-tinted card for error streams
+- `error` — inline error message if execution failed
 
 ---
 
@@ -445,18 +525,11 @@ step.tool_output:
   "dependencies": {
     "smolagents": "^1.x",
     "litellm": "^1.x",
-    "next": "16.2.10",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "next": "16.2.10 (for API routes only)"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.10",
-    "tailwindcss": "^4",
     "typescript": "^5"
   }
 }
@@ -464,74 +537,34 @@ step.tool_output:
 
 ---
 
-## Development Workflow
+## Running
 
 ```bash
-# Start development server
-bun dev
-
-# Build for production
-bun build
-
-# Run production server
-bun start
+cd smolagents
+pip install smolagents litellm
+npm install
+npm run dev    # starts backend on port 5000
 ```
 
-Access at `http://localhost:3000`
+The shared frontend proxies to this backend via `shared/next.config.mjs` (`CHATLET_BACKEND=smolagents`). After implementing, add your port and URL to `shared/config/backends.ts`.
 
 ---
 
 ## Data Flow Summary
 
-1. **User** types prompt and clicks Send
-2. **Client** sends `POST /api/chat` with `{ prompt }`
-3. **API Route** creates a smolagents `CodeAgent` with model, bash tool, and authorized imports
-4. **Agent** generates Python code to invoke `bash_tool(command="...")`
-5. **CodeAgent** executes the generated code locally (safe by default)
-6. **LLM** generates code based on prompt and available tools
-7. **bash_tool()** executes command via `subprocess.run()` (30s timeout)
+1. **User** types prompt and clicks Send in the shared frontend
+2. **Frontend** sends `POST /api/chat` with `{ prompt }`
+3. **next.config.mjs** rewrites the request to `smolagents` backend on `:5000`
+4. **API Route** creates a smolagents `CodeAgent` with model, bash tool, and authorized imports
+5. **Agent** generates Python code to invoke `bash_tool(command="...")`
+6. **CodeAgent** executes the generated code locally (safe by default)
+7. **LLM** generates code based on prompt and available tools
+8. **bash_tool()** executes command via `subprocess.run()` (30s timeout)
    - **Allow List Check** verifies the base command is permitted (or "Allow All" is enabled)
-8. **Agent** iterates: generates code → executes → observes output → generates more code
-9. **Agent** calls `final_answer(result)` when done (or `max_steps` reached)
-10. **API Route** returns `{ text: result, toolOutputs[] }` from agent logs
-11. **Client** displays response text and tool output cards
-
----
-
-## UI Behavior
-
-### Autoscroll Behavior
-- Uses `useLayoutEffect` + `setTimeout(..., 0)` pattern to autoscroll chat to bottom
-- Triggers on changes to `messages` array or `loading` state
-- Scrolls by setting `container.scrollTop = scrollHeight`
-- This is a hard jump (no smooth scrolling animation)
-- Unconditionally scrolls user back to bottom even if they scrolled up mid-conversation
-- No scroll preservation or intersection observer for smart scrolling
-
-### Chat Container Styling
-- `flex-1 min-h-0 overflow-y-auto px-8 py-6 pb-20 space-y-6`
-- `overflow-y-auto` enables scrolling
-- `pb-20` provides bottom padding so content isn't hidden behind the sticky input bar
-
-### Input Bar Behavior
-- `sticky bottom-0` keeps input bar fixed at bottom of chat card
-- Has `data-input-bar` attribute
-
-### Typing Indicator Animation
-- Three dots with staggered `animate-bounce` (Tailwind CSS)
-- Animation delays: 0ms, 150ms, 300ms
-
-### Other UI Effects
-- Dark mode toggle: `transition-colors` on button
-- Input field: `transition-shadow` on focus
-- Send button: `transition-all` + `active:scale-[0.98]` press feedback
-- Send button disabled state: `disabled:opacity-40`
-
-### Notes on Scrolling
-- No `smooth` scrolling — hard jump via direct scrollTop assignment
-- No scroll preservation — user is always scrolled to bottom on new messages
-- No `scrollIntoView` with `behavior: 'smooth'`
-- No intersection observer or smart scroll detection
+9. **Agent** iterates: generates code → executes → observes output → generates more code
+10. **Agent** calls `final_answer(result)` when done (or `max_steps` reached)
+11. **API Route** returns `{ text: result, toolOutputs[] }` from agent logs
+12. **Frontend** displays response text and tool output cards
 
 ---
 
@@ -663,3 +696,16 @@ Access at `http://localhost:3000`
 | Event-driven loops | Code generation loop |
 | `Workflow` + `Event` + `@step` | `CodeAgent` + `@tool` |
 | Python-first | Python-first |
+
+## smolagents vs Mastra: Key Mapping
+
+| Mastra | smolagents |
+|--------|------------|
+| `agent.generate(prompt)` | `CodeAgent.run(prompt)` |
+| `createTool({ inputSchema, execute })` | `@tool` decorated function |
+| `maxSteps: 5` | `max_steps=30` |
+| `FullOutput` | String (final_answer) |
+| `agent.stream()` | Not built-in |
+| `Memory` + `SQLiteStorage` | `agent.write_memory_to_messages()` |
+| Agent loop | Automatic code generation loop |
+| `Workflow` class | `managed_agents` for multi-agent |

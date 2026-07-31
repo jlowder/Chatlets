@@ -1,10 +1,12 @@
-# Simple LLM Chat Interface
+# Chatlets — LlamaIndex Workflows Backend
+
+> **Note:** This is a **backend-only** implementation. The shared frontend (in `shared/`) provides the chat UI for all Chatlets. See [vercel-ai/SPEC.md](../vercel-ai/SPEC.md) for the full architecture.
+
+---
 
 ## Project Overview
 
-A minimal chat interface that connects to a OpenAI-compatible LLM with bash execution capabilities. The app allows users to send prompts and receive responses, with the LLM able to invoke a `bash` tool to execute shell commands.
-
-Built with LlamaIndex Workflows' event-driven, step-based paradigm — a `Workflow` is defined with typed `@step`-decorated functions that pass `Event` objects between each other. The workflow automatically routes events based on type annotations, enabling loops and conditional branching.
+A minimal chat backend that connects to an OpenAI-compatible LLM with bash execution capabilities using LlamaIndex Workflows' event-driven, step-based paradigm. A `Workflow` is defined with typed `@step`-decorated functions that pass `Event` objects between each other. The workflow automatically routes events based on type annotations, enabling loops and conditional branching.
 
 ---
 
@@ -12,30 +14,27 @@ Built with LlamaIndex Workflows' event-driven, step-based paradigm — a `Workfl
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    User Browser                              │
+│              Shared Frontend (shared/)                     │
 │                                                             │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │              app/page.tsx (Client)                    │  │
-│  │  ┌─────────────┐       ┌──────────────┐              │  │
-│  │  │   Input     │──────▶│   Response   │              │  │
-│  │  │   Text +    │       │   Text Area  │              │  │
-│  │  │   Button    │       └──────────────┘              │  │
-│  │  └─────────────┘                                     │  │
-│  │        │                                             │  │
-│  │        │ fetch POST /api/chat                        │  │
-│  │        ▼                                             │  │
+│  │  Chat UI: input + response + tool output cards       │  │
 │  └───────────────────────────────────────────────────────┘  │
+│        │                                                    │
+│        │ fetch POST /api/chat                               │
+│        ▼                                                    │
+│  next.config.mjs (CHATLET_BACKEND=liw)                      │
+│  rewrites → liw backend on :5000                           │
 └─────────────────────────────────────────────────────────────┘
                         │
-                        │ HTTP POST
+                        │ HTTP POST /api/chat { prompt }
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              app/api/chat/route.ts                          │
+│              liw backend (port 5000)                       │
 │                                                             │
 │  ┌─────────────────┐    ┌───────────────────────────────┐   │
 │  │ Workflow.run()  │───▶│ bash Tool (FunctionTool)     │   │
 │  │                 │    │  - FunctionTool.from_defaults│   │
-│  │                 │    │  - execAsync(cmd, timeout)   │   │
+│  │                 │    │  - subprocess.run(timeout)   │   │
 │  │  ┌────────────┐ │    │  - 30s timeout              │   │
 │  │  │   prompt   │ │    │  - returns stdout/stderr     │   │
 │  │  └────────────┘ │    └───────────────────────────────┘   │
@@ -53,7 +52,7 @@ Built with LlamaIndex Workflows' event-driven, step-based paradigm — a `Workfl
 └────────┼────────────────────────────────────────────────┘      │
          │                                                       │
          │ OpenAI-compatible API call                            │
-         │ timeout: 120s                                         │
+         │ timeout: 120s (max workflow runtime)                  │
          │ Allow List Check                                      │
          │                                                       │
          ▼
@@ -64,58 +63,27 @@ Built with LlamaIndex Workflows' event-driven, step-based paradigm — a `Workfl
 
 ---
 
-## Mermaid Architecture Diagram
+## API Endpoints
 
-```mermaid
-graph TB
-    subgraph Browser
-        Page["app/page.tsx (Client)"]
-        Input["Input + Send Button"]
-        Response["Response Text Area"]
-        ToolCards["Tool Output Cards"]
-    end
-    
-    subgraph Server
-        API["app/api/chat/route.ts"]
-        
-        subgraph LlamaIndex Workflows
-            Workflow["Workflow Definition"]
-            Start["StartEvent"]
-            Prepare["prepare_chat_history Step"]
-            LLMStep["handle_llm_input Step"]
-            ToolStep["handle_tool_calls Step"]
-            Stop["StopEvent"]
-        end
-        
-        BashTool["bash Tool (FunctionTool)"]
-    end
-    
-    subgraph LocalLLM
-        LLM["OpenAI-compatible"]
-    end
-    
-    subgraph Shell
-        Cmd["execAsync"]
-    end
-    
-    Input --> Page
-    Page --> Response
-    Page --> ToolCards
-    Page --"POST /api/chat"--> API
-    API --> Workflow
-    Workflow --> Start
-    Start --> Prepare
-    Prepare --> LLMStep
-    LLMStep --> LLM
-    LLM --> LLMStep
-    LLMStep --"tool_calls"--> ToolStep
-    LLMStep --"no_tool_calls"--> Stop
-    ToolStep --> BashTool
-    BashTool --"check allowed"--> AllowList["Allow List Check"]
-    AllowList --"permitted"--> Cmd
-    Cmd --"stdout/stderr"--> BashTool
-    ToolStep --> LLMStep
-```
+### `POST /api/chat`
+
+| Property | Value |
+|----------|-------|
+| **Content-Type** | `application/json` |
+| **Request Body** | `{ prompt: string }` |
+| **Success Response** | `{ text: string, toolOutputs: { stdout?: string, stderr?: string, error?: string }[] }` |
+| **Error Response** | `{ error: string }` |
+
+---
+
+## API Contract
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `prompt` | `string` | Yes | User's chat message |
+| `text` | `string` | Yes | LLM response text |
+| `toolOutputs` | `object[]` | No | Array of bash tool execution results |
+| `error` | `string` | No | Error message if request fails |
 
 ---
 
@@ -123,47 +91,26 @@ graph TB
 
 | Layer | Technology | Version |
 |-------|------------|---------|
-| **Framework** | Next.js | 16.2.10 (App Router) |
-| **UI** | React | 19.2.4 |
-| **Workflow Framework** | LlamaIndex Workflows | 0.x (via llama-index-core) |
+| **Workflow Framework** | LlamaIndex Workflows | 0.x (via `llama-index-core`) |
+| **LLM Provider** | `llama-index-llms-openai-compatible` | 0.x |
 | **Validation** | Pydantic | 2.x |
-| **Styling** | Tailwind CSS | v4 |
-| **Type Safety** | TypeScript | 5.x |
-| **Fonts** | Geist Sans/Mono | (via Tailwind v4) |
+| **Type Safety** | TypeScript | 5.x (for proxy/API layer) |
 
 ---
 
 ## Key Components
 
-### `app/page.tsx`
+### `app/api/chat/route.ts` (or `agent_service.py` equivalent)
 
-**Type**: Client Component (`'use client'`)  
-**Purpose**: Chat UI with input, response display, and tool output visualization
-
-```tsx
-useState hooks:
-  - prompt: Input field value
-  - response: LLM response text
-  - toolOutputs: Array of bash tool execution results
-  - loading: Button/input disabled state
-
-send():
-  - POST to /api/chat with { prompt }
-  - Update response and toolOutputs on success
-```
-
-### `app/api/chat/route.ts`
-
-**Type**: Server API Route (POST)  
+**Type**: API Route (POST)  
 **Purpose**: Orchestrate LLM inference via a LlamaIndex Workflow
 
-```tsx
+```ts
 Key imports (Python):
-  - Workflow, StartEvent, StopEvent, step, Context from llama_index.core.workflow
-  - Event from llama_index.core.workflow
+  - Workflow, StartEvent, StopEvent, step, Context, Event from llama_index.core.workflow
   - FunctionTool from llama_index.core.tools
   - ChatMemoryBuffer from llama_index.core.memory
-  - BaseChatMessage, ChatMessage from llama_index.core.llms
+  - ChatMessage from llama_index.core.llms
 
 Key exports:
   - POST(req: NextRequest)
@@ -175,20 +122,66 @@ Configuration:
   - timeout: 120s (max workflow runtime)
 ```
 
-### `app/globals.css`
+### Workflow Definition
 
-**Type**: Global Styles  
-**Purpose**: Tailwind v4 setup with system theme detection
+**Type**: Python class with `@step`-decorated async functions  
+**Purpose**: Define the event-driven chat workflow with 4 steps
 
-```css
-Tailwind v4 syntax:
-  @import "tailwindcss"
-  @theme inline { ... }
+```python
+class ChatWorkflow(Workflow):
+    def __init__(self, *args, llm=None, tools=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tools = tools or []
+        self.llm = llm
 
-Features:
-  - System color scheme detection (light/dark)
-  - CSS custom properties for theming
-  - Geist font family configuration
+    @step
+    async def prepare_chat_history(self, ctx: Context, ev: StartEvent) -> InputEvent:
+        """Entry point: initialize memory and build chat history."""
+
+    @step
+    async def handle_llm_input(self, ctx: Context, ev: InputEvent) -> Union[ToolCallEvent, StopEvent]:
+        """Call LLM with chat history + tools. Returns ToolCallEvent or StopEvent."""
+
+    @step
+    async def handle_tool_calls(self, ctx: Context, ev: ToolCallEvent) -> InputEvent:
+        """Execute tool calls and return updated chat history."""
+```
+
+### Custom Event Types
+
+**Type**: Typed `Event` subclasses  
+**Purpose**: Define the data contracts between workflow steps
+
+```python
+class InputEvent(Event):
+    """Event carrying chat history for LLM processing."""
+    input: list[ChatMessage]
+
+class ToolCallEvent(Event):
+    """Event carrying tool calls to be executed."""
+    tool_calls: list[ToolSelection]
+
+class StreamEvent(Event):
+    """Event for streaming response deltas."""
+    delta: str
+```
+
+### Bash Tool
+
+**Type**: `FunctionTool.from_defaults(func)`  
+**Purpose**: Wrap a Python function as a LlamaIndex tool with auto-schemed parameters
+
+```python
+def bash_command(command: str) -> str:
+    """Execute a bash command on the server.
+    
+    Args:
+        command: The bash/shell command to execute
+        
+    Returns:
+        JSON string with stdout, stderr, and optional error
+    """
+    # ... execute and return result as JSON string
 ```
 
 ---
@@ -213,7 +206,7 @@ llm = OpenAICompatible(
 | **Provider Type** | OpenAI-compatible |
 | **Max Tokens** | Model-dependent |
 
-Configuration data is persisted to a file called llm-config.json
+Configuration data is persisted to a file called `llm-config.json`.
 
 ---
 
@@ -315,12 +308,12 @@ json.dumps({
 ### Default Allow List
 
 By default, the allow list includes:
-- `ls` - List directory contents
-- `pwd` - Print working directory
+- `ls` — List directory contents
+- `pwd` — Print working directory
 
 ### User Editable
 
-Users can modify the allow list through the web app UI:
+Users can modify the allow list through the shared frontend UI:
 - **Add commands**: Enter a new command to add it to the list
 - **Remove commands**: Click the remove button next to any command
 
@@ -332,182 +325,136 @@ A toggle setting enables "Allow All" mode:
 
 ---
 
+## Workflow Pattern
+
+### 4-Step Event-Driven Flow
+
+```
+StartEvent → prepare_chat_history → InputEvent → handle_llm_input
+                                                        ↓
+                                           { ToolCallEvent | StopEvent }
+                                                ↓              ↓
+                                        handle_tool_calls  →  End
+                                                ↓
+                                         InputEvent (loop back)
+```
+
+### Type-Driven Event Routing
+
+LlamaIndex Workflows automatically routes events based on step type annotations:
+
+```python
+# Step returning InputEvent → next step accepting InputEvent is called
+@step
+async def handle_llm_input(self, ctx: Context, ev: InputEvent) -> Union[ToolCallEvent, StopEvent]:
+    # ...
+
+# Step accepting ToolCallEvent
+@step
+async def handle_tool_calls(self, ctx: Context, ev: ToolCallEvent) -> InputEvent:
+    # ...
+```
+
+### Persistent State via `ctx.store`
+
+The `Context` object provides built-in key-value storage that persists across steps:
+
+```python
+# Get or create memory
+memory = await ctx.store.get("memory", default=None)
+if not memory:
+    memory = ChatMemoryBuffer.from_defaults(llm=self.llm)
+
+# Persist changes
+memory.put(ChatMessage(role="user", content=prompt))
+await ctx.store.set("memory", memory)
+```
+
+**Key features**:
+- `ctx.store.set(key, value)` — persist data across steps
+- `ctx.store.get(key, default=...)` — retrieve persisted data
+- `ChatMemoryBuffer` — LlamaIndex's built-in chat memory, auto-manages conversation history
+
+### Context & Streaming
+
+```python
+# Run with persistent context (for multi-turn)
+ctx = Context(workflow)
+result = await workflow.run(input=prompt, ctx=ctx)
+
+# Stream events to client
+ctx.write_event_to_stream(StreamEvent(delta=response.delta or ""))
+```
+
+---
+
 ## Design Patterns
 
-### 1. Client-Server Separation
+### 1. Backend-Only API
 
-- **Client** (`page.tsx`): UI-only, no API credentials
-- **Server** (`api/chat/route.ts`): Holds API key, makes LLM calls
+- **API Route** (`api/chat/route.ts`): Holds API key, makes LLM calls
 - **Benefit**: API key never exposed to browser
+- The shared frontend communicates via a standardized `POST /api/chat` contract
 
 ### 2. LlamaIndex Workflows Event-Driven Pattern
 
 ```python
-from typing import Any, List, Union
-from llama_index.core.workflow import (
-    Workflow, StartEvent, StopEvent, step, Context, Event
-)
-from llama_index.core.llms import ChatMessage
-from llama_index.core.tools import ToolSelection, ToolOutput
-from llama_index.core.memory import ChatMemoryBuffer
-from llama_index.core.tools.types import BaseTool
-
-# Step 1: Define custom event types
-class InputEvent(Event):
-    """Event carrying chat history for LLM processing."""
-    input: list[ChatMessage]
-
-class StreamEvent(Event):
-    """Event for streaming response deltas."""
-    delta: str
-
-class ToolCallEvent(Event):
-    """Event carrying tool calls to be executed."""
-    tool_calls: list[ToolSelection]
-
-
-# Step 2: Define the workflow with typed steps
 class ChatWorkflow(Workflow):
-    def __init__(
-        self,
-        *args: Any,
-        llm: Any = None,
-        tools: List[BaseTool] = None,
-        **kwargs: Any,
-    ) -> None:
+    def __init__(self, *args, llm=None, tools=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.tools = tools or []
         self.llm = llm
-        # Ensure the LLM supports function/tool calling
-        assert hasattr(self.llm, "stream_chat_with_tools")
 
     @step
-    async def prepare_chat_history(
-        self, ctx: Context, ev: StartEvent
-    ) -> InputEvent:
-        """Entry point: initialize memory and build chat history."""
-        # Initialize memory if not exists
+    async def prepare_chat_history(self, ctx: Context, ev: StartEvent) -> InputEvent:
         memory = await ctx.store.get("memory", default=None)
         if not memory:
             memory = ChatMemoryBuffer.from_defaults(llm=self.llm)
-        
-        # Add user input to memory
-        user_msg = ChatMessage(role="user", content=ev.input)
-        memory.put(user_msg)
-        
-        # Get chat history
-        chat_history = memory.get()
-        
-        # Persist memory
+        memory.put(ChatMessage(role="user", content=ev.input))
         await ctx.store.set("memory", memory)
-        
-        return InputEvent(input=chat_history)
+        return InputEvent(input=memory.get())
 
     @step
-    async def handle_llm_input(
-        self, ctx: Context, ev: InputEvent
-    ) -> Union[ToolCallEvent, StopEvent]:
-        """Call LLM with chat history + tools. Returns ToolCallEvent or StopEvent."""
-        chat_history = ev.input
-        
-        # Stream the LLM response
+    async def handle_llm_input(self, ctx: Context, ev: InputEvent) -> Union[ToolCallEvent, StopEvent]:
         response_stream = await self.llm.stream_chat_with_tools(
-            self.tools, chat_history=chat_history
+            self.tools, chat_history=ev.input
         )
-        
         final_response = None
         async for response in response_stream:
             final_response = response
             ctx.write_event_to_stream(StreamEvent(delta=response.delta or ""))
         
-        # Save assistant response to memory
         memory = await ctx.store.get("memory")
         memory.put(final_response.message)
         await ctx.store.set("memory", memory)
         
-        # Extract tool calls
-        tool_calls = self.llm.get_tool_calls_from_response(
-            final_response, error_on_no_tool_call=False
-        )
-        
+        tool_calls = self.llm.get_tool_calls_from_response(final_response, error_on_no_tool_call=False)
         if not tool_calls:
-            # No tool calls — workflow is done
             return StopEvent(result={"response": final_response.message.content})
-        
-        # Tool calls found — pass to tool handler
         return ToolCallEvent(tool_calls=tool_calls)
 
     @step
-    async def handle_tool_calls(
-        self, ctx: Context, ev: ToolCallEvent
-    ) -> InputEvent:
-        """Execute tool calls and return updated chat history."""
-        tool_calls = ev.tool_calls
+    async def handle_tool_calls(self, ctx: Context, ev: ToolCallEvent) -> InputEvent:
         tools_by_name = {tool.metadata.get_name(): tool for tool in self.tools}
         tool_msgs = []
-        
-        # Execute each tool call
-        for tool_call in tool_calls:
+        for tool_call in ev.tool_calls:
             tool = tools_by_name.get(tool_call.tool_name)
-            additional_kwargs = {
-                "tool_call_id": tool_call.tool_id,
-                "name": tool.metadata.get_name(),
-            }
-            
-            if not tool:
-                tool_msgs.append(
-                    ChatMessage(
-                        role="tool",
-                        content=f"Tool {tool_call.tool_name} does not exist",
-                        additional_kwargs=additional_kwargs,
-                    )
-                )
-                continue
-            
-            try:
-                tool_output = tool(**tool_call.tool_kwargs)
-                tool_msgs.append(
-                    ChatMessage(
-                        role="tool",
-                        content=tool_output.content,
-                        additional_kwargs=additional_kwargs,
-                    )
-                )
-            except Exception as e:
-                tool_msgs.append(
-                    ChatMessage(
-                        role="tool",
-                        content=f"Encountered error in tool call: {e}",
-                        additional_kwargs=additional_kwargs,
-                    )
-                )
+            tool_output = tool(**tool_call.tool_kwargs) if tool else None
+            tool_msgs.append(ChatMessage(
+                role="tool",
+                content=tool_output.content if tool else f"Tool {tool_call.tool_name} does not exist",
+            ))
         
-        # Update memory with tool results
         memory = await ctx.store.get("memory")
         for msg in tool_msgs:
             memory.put(msg)
         await ctx.store.set("memory", memory)
-        
-        # Return updated chat history to loop back to LLM
-        chat_history = memory.get()
-        return InputEvent(input=chat_history)
+        return InputEvent(input=memory.get())
 
-
-# Step 3: Run the workflow
-workflow = ChatWorkflow(
-    llm=llm,
-    tools=[bash_tool],
-    timeout=120,  # 120 second max runtime
-    verbose=True,
-)
-
-# Run synchronously
+# Run the workflow
+workflow = ChatWorkflow(llm=llm, tools=[bash_tool], timeout=120)
 result = await workflow.run(input=prompt)
 final_text = result["response"]
-
-# Run with persistent context (for multi-turn)
-ctx = Context(workflow)
-result = await workflow.run(input=prompt, ctx=ctx)
 ```
 
 **Key LlamaIndex Workflows concepts used**:
@@ -518,21 +465,17 @@ result = await workflow.run(input=prompt, ctx=ctx)
 - `Context` (`ctx`) — provides `ctx.store` for persistent state across steps
 - `ctx.store.set()` / `ctx.store.get()` — key-value storage that persists across step invocations
 - `ctx.write_event_to_stream()` — writes events to the SSE stream for client-side updates
-- `handler.stream_events()` — async iterator yielding streamed events
 - **Type-driven routing** — workflow routes events based on step type annotations (e.g., step returning `InputEvent` → next step accepting `InputEvent`)
 - **Loops** — natural loops form when a step returns an event type that another step consumes (e.g., `ToolCallEvent → handle_tool_calls → InputEvent → handle_llm_input → ToolCallEvent`)
 - **Conditional routing** — step returns different event types (`Union[ToolCallEvent, StopEvent]`), workflow routes accordingly
 - `timeout=120` — max workflow runtime in seconds (prevents infinite loops)
-- `verbose=True` — logs each step execution for debugging
 
-### 3. Tool Output Visualization
+### 3. Tool Output Structure
 
-```tsx
-result["response"] + tool_outputs[]:
-  ├─ stdout → Green-tinted card with dark terminal background
-  ├─ stderr → Red-tinted card for error streams
-  └─ error  → Inline error message (execution failed)
-```
+Tool results are extracted from `result["response"]` and `ToolOutput.content` strings:
+- `stdout` — green-tinted output card with dark terminal background
+- `stderr` — red-tinted card for error streams
+- `error` — inline error message if execution failed
 
 ---
 
@@ -543,18 +486,11 @@ result["response"] + tool_outputs[]:
   "dependencies": {
     "llama-index-core": "^0.x",
     "llama-index-llms-openai-compatible": "^0.x",
-    "next": "16.2.10",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "next": "16.2.10 (for API routes only)"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.10",
-    "tailwindcss": "^4",
     "typescript": "^5"
   }
 }
@@ -562,77 +498,52 @@ result["response"] + tool_outputs[]:
 
 ---
 
-## Development Workflow
+## Running
 
 ```bash
-# Start development server
-bun dev
-
-# Build for production
-bun build
-
-# Run production server
-bun start
+cd liw
+pip install llama-index-core llama-index-llms-openai-compatible
+npm install
+npm run dev    # starts backend on port 5000
 ```
 
-Access at `http://localhost:3000`
+The shared frontend proxies to this backend via `shared/next.config.mjs` (`CHATLET_BACKEND=liw`). After implementing, add your port and URL to `shared/config/backends.ts`.
 
 ---
 
 ## Data Flow Summary
 
-1. **User** types prompt and clicks Send
-2. **Client** sends `POST /api/chat` with `{ prompt }`
-3. **API Route** creates a `ChatWorkflow` with LLM + bash tool + typed steps
-4. **Workflow** starts with `StartEvent(input=prompt)` → `prepare_chat_history()` step
-5. **prepare_chat_history** builds chat history and returns `InputEvent`
-6. **InputEvent** triggers `handle_llm_input()` step → LLM call with tools
-7. **LLM** processes chat history, may emit tool calls
-8. **handle_llm_input** routes to `ToolCallEvent` (if tools) or `StopEvent` (if done)
-9. **ToolCallEvent** triggers `handle_tool_calls()` step
-10. **handle_tool_calls** executes `bash_tool()` via `FunctionTool` (30s timeout)
+1. **User** types prompt and clicks Send in the shared frontend
+2. **Frontend** sends `POST /api/chat` with `{ prompt }`
+3. **next.config.mjs** rewrites the request to `liw` backend on `:5000`
+4. **API Route** creates a `ChatWorkflow` with LLM + bash tool + typed steps
+5. **Workflow** starts with `StartEvent(input=prompt)` → `prepare_chat_history()` step
+6. **prepare_chat_history** builds chat history and returns `InputEvent`
+7. **InputEvent** triggers `handle_llm_input()` step → LLM call with tools
+8. **LLM** processes chat history, may emit tool calls
+9. **handle_llm_input** routes to `ToolCallEvent` (if tools) or `StopEvent` (if done)
+10. **ToolCallEvent** triggers `handle_tool_calls()` step
+11. **handle_tool_calls** executes `bash_tool()` via `FunctionTool` (30s timeout)
     - **Allow List Check** verifies the base command is permitted (or "Allow All" is enabled)
-11. **Tool results** added to memory; `InputEvent` returned → loop back to step 6
-12. **Workflow** terminates when `StopEvent` is emitted
-13. **API Route** returns `{ text: result["response"], toolOutputs[] }`
-14. **Client** displays response text and tool output cards
+12. **Tool results** added to memory; `InputEvent` returned → loop back to step 7
+13. **Workflow** terminates when `StopEvent` is emitted
+14. **API Route** returns `{ text: result["response"], toolOutputs[] }`
+15. **Frontend** displays response text and tool output cards
 
 ---
 
-## UI Behavior
+## Streaming Considerations
 
-### Autoscroll Behavior
-- Uses `useLayoutEffect` + `setTimeout(..., 0)` pattern to autoscroll chat to bottom
-- Triggers on changes to `messages` array or `loading` state
-- Scrolls by setting `container.scrollTop = scrollHeight`
-- This is a hard jump (no smooth scrolling animation)
-- Unconditionally scrolls user back to bottom even if they scrolled up mid-conversation
-- No scroll preservation or intersection observer for smart scrolling
+LlamaIndex Workflows support streaming via `ctx.write_event_to_stream()` and `handler.stream_events()`:
 
-### Chat Container Styling
-- `flex-1 min-h-0 overflow-y-auto px-8 py-6 pb-20 space-y-6`
-- `overflow-y-auto` enables scrolling
-- `pb-20` provides bottom padding so content isn't hidden behind the sticky input bar
+```python
+# Stream events from the workflow
+handler = await workflow.run(input=prompt, return_messages=True)
+for event in handler.stream_events():
+    # Emit events to client via SSE
+```
 
-### Input Bar Behavior
-- `sticky bottom-0` keeps input bar fixed at bottom of chat card
-- Has `data-input-bar` attribute
-
-### Typing Indicator Animation
-- Three dots with staggered `animate-bounce` (Tailwind CSS)
-- Animation delays: 0ms, 150ms, 300ms
-
-### Other UI Effects
-- Dark mode toggle: `transition-colors` on button
-- Input field: `transition-shadow` on focus
-- Send button: `transition-all` + `active:scale-[0.98]` press feedback
-- Send button disabled state: `disabled:opacity-40`
-
-### Notes on Scrolling
-- No `smooth` scrolling — hard jump via direct scrollTop assignment
-- No scroll preservation — user is always scrolled to bottom on new messages
-- No `scrollIntoView` with `behavior: 'smooth'`
-- No intersection observer or smart scroll detection
+The `handle_llm_input()` step already uses `stream_chat_with_tools()` for token-level streaming and writes `StreamEvent(delta=...)` chunks to the event stream.
 
 ---
 

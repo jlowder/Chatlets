@@ -1,10 +1,12 @@
-# Simple LLM Chat Interface
+# Chatlets — Microsoft Agent Framework Backend
+
+> **Note:** This is a **backend-only** implementation. The shared frontend (in `shared/`) provides the chat UI for all Chatlets. See [vercel-ai/SPEC.md](../vercel-ai/SPEC.md) for the full architecture.
+
+---
 
 ## Project Overview
 
-A minimal chat interface that connects to a OpenAI-compatible LLM with bash execution capabilities. The app allows users to send prompts and receive responses, with the LLM able to invoke a `bash` tool to execute shell commands.
-
-Built with Microsoft Agent Framework's agent-centric approach — an `Agent` is created from a chat client with tools, instructions, and session management. MAF provides production-grade features out of the box: compaction, observability, middleware, and multi-language support (Python, C#, Go).
+A minimal chat backend that connects to an OpenAI-compatible LLM with bash execution capabilities using Microsoft Agent Framework's (MAF) agent-centric approach. An `Agent` is created from a chat client with tools, instructions, and session management. MAF provides production-grade features out of the box: compaction, observability, middleware, and multi-language support (Python, C#, Go).
 
 ---
 
@@ -12,30 +14,27 @@ Built with Microsoft Agent Framework's agent-centric approach — an `Agent` is 
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    User Browser                              │
+│              Shared Frontend (shared/)                     │
 │                                                             │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │              app/page.tsx (Client)                    │  │
-│  │  ┌─────────────┐       ┌──────────────┐              │  │
-│  │  │   Input     │──────▶│   Response   │              │  │
-│  │  │   Text +    │       │   Text Area  │              │  │
-│  │  │   Button    │       └──────────────┘              │  │
-│  │  └─────────────┘                                     │  │
-│  │        │                                             │  │
-│  │        │ fetch POST /api/chat                        │  │
-│  │        ▼                                             │  │
+│  │  Chat UI: input + response + tool output cards       │  │
 │  └───────────────────────────────────────────────────────┘  │
+│        │                                                    │
+│        │ fetch POST /api/chat                               │
+│        ▼                                                    │
+│  next.config.mjs (CHATLET_BACKEND=maf)                      │
+│  rewrites → maf backend on :5000                           │
 └─────────────────────────────────────────────────────────────┘
                         │
-                        │ HTTP POST
+                        │ HTTP POST /api/chat { prompt }
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              app/api/chat/route.ts                          │
+│              maf backend (port 5000)                       │
 │                                                             │
 │  ┌─────────────────┐    ┌───────────────────────────────┐   │
 │  │ Agent.run()     │───▶│ bash Tool (@tool decorated)  │   │
 │  │                 │    │  - FunctionInvocationContext │   │
-│  │                 │    │  - execAsync(cmd, timeout)   │   │
+│  │                 │    │  - subprocess.run(timeout)   │   │
 │  │  ┌────────────┐ │    │  - 30s timeout              │   │
 │  │  │   prompt   │ │    │  - returns stdout/stderr     │   │
 │  │  └────────────┘ │    └───────────────────────────────┘   │
@@ -64,53 +63,27 @@ Built with Microsoft Agent Framework's agent-centric approach — an `Agent` is 
 
 ---
 
-## Mermaid Architecture Diagram
+## API Endpoints
 
-```mermaid
-graph TB
-    subgraph Browser
-        Page["app/page.tsx (Client)"]
-        Input["Input + Send Button"]
-        Response["Response Text Area"]
-        ToolCards["Tool Output Cards"]
-    end
-    
-    subgraph Server
-        API["app/api/chat/route.ts"]
-        
-        subgraph MAF
-            Agent["Agent Definition"]
-            Client["ChatClient"]
-            Session["Session"]
-        end
-        
-        BashTool["@tool bash_tool"]
-    end
-    
-    subgraph LocalLLM
-        LLM["OpenAI-compatible"]
-    end
-    
-    subgraph Shell
-        Cmd["execAsync"]
-    end
-    
-    Input --> Page
-    Page --> Response
-    Page --> ToolCards
-    Page --"POST /api/chat"--> API
-    API --> Agent
-    Agent --> Client
-    Client --> LLM
-    LLM --> Client
-    Client --"tool_calls"--> BashTool
-    BashTool --"check allowed"--> AllowList["Allow List Check"]
-    AllowList --"permitted"--> Cmd
-    Cmd --"stdout/stderr"--> BashTool
-    BashTool --> Session
-    Session --> Client
-    Agent --> API
-```
+### `POST /api/chat`
+
+| Property | Value |
+|----------|-------|
+| **Content-Type** | `application/json` |
+| **Request Body** | `{ prompt: string }` |
+| **Success Response** | `{ text: string, toolOutputs: { stdout?: string, stderr?: string, error?: string }[] }` |
+| **Error Response** | `{ error: string }` |
+
+---
+
+## API Contract
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `prompt` | `string` | Yes | User's chat message |
+| `text` | `string` | Yes | LLM response text |
+| `toolOutputs` | `object[]` | No | Array of bash tool execution results |
+| `error` | `string` | No | Error message if request fails |
 
 ---
 
@@ -118,42 +91,22 @@ graph TB
 
 | Layer | Technology | Version |
 |-------|------------|---------|
-| **Framework** | Next.js | 16.2.10 (App Router) |
-| **UI** | React | 19.2.4 |
 | **Agent Framework** | Microsoft Agent Framework (Python) | 1.x |
+| **LLM Provider** | `agent-framework-openai` | 1.x |
 | **Validation** | Pydantic | 2.x |
-| **Styling** | Tailwind CSS | v4 |
-| **Type Safety** | TypeScript | 5.x |
-| **Fonts** | Geist Sans/Mono | (via Tailwind v4) |
+| **Type Safety** | TypeScript | 5.x (for proxy/API layer) |
 
 ---
 
 ## Key Components
 
-### `app/page.tsx`
+### `app/api/chat/route.ts` (or `agent_service.py` equivalent)
 
-**Type**: Client Component (`'use client'`)  
-**Purpose**: Chat UI with input, response display, and tool output visualization
-
-```tsx
-useState hooks:
-  - prompt: Input field value
-  - response: LLM response text
-  - toolOutputs: Array of bash tool execution results
-  - loading: Button/input disabled state
-
-send():
-  - POST to /api/chat with { prompt }
-  - Update response and toolOutputs on success
-```
-
-### `app/api/chat/route.ts`
-
-**Type**: Server API Route (POST)  
+**Type**: API Route (POST)  
 **Purpose**: Orchestrate LLM inference via a Microsoft Agent Framework agent
 
-```tsx
-Key imports (Python):
+```python
+Key imports:
   - Agent, tool, FunctionInvocationContext from agent_framework
   - OpenAIChatClient from agent_framework.openai
 
@@ -167,20 +120,43 @@ Configuration:
   - run(): agent.run(prompt, session=session) → AgentResult
 ```
 
-### `app/globals.css`
+### Agent Definition
 
-**Type**: Global Styles  
-**Purpose**: Tailwind v4 setup with system theme detection
+**Type**: Python class (`Agent`)  
+**Purpose**: Core primitive that encapsulates client, tools, instructions, and session
 
-```css
-Tailwind v4 syntax:
-  @import "tailwindcss"
-  @theme inline { ... }
+```python
+agent = Agent(
+    client=client,
+    name="chat-agent",
+    instructions=[
+        "You are a helpful assistant that can execute bash commands on the server.",
+        "Use the bash tool to run commands and return the results to the user.",
+    ],
+    tools=[bash_tool],
+)
+```
 
-Features:
-  - System color scheme detection (light/dark)
-  - CSS custom properties for theming
-  - Geist font family configuration
+### Bash Tool
+
+**Type**: Python function decorated with `@tool`  
+**Purpose**: Turn a Python function into an agent-accessible tool with typed parameters
+
+```python
+from agent_framework import tool
+from typing import Annotated
+from pydantic import Field
+
+@tool(
+    name="bash",
+    description="Execute a bash command on the server."
+)
+def bash_tool(
+    command: Annotated[str, Field(description="The bash/shell command to execute")],
+    ctx: FunctionInvocationContext,
+) -> str:
+    """Execute a bash command and return stdout/stderr."""
+    # ... implementation ...
 ```
 
 ---
@@ -205,7 +181,7 @@ client = OpenAIChatClient(
 | **Provider Type** | OpenAI-compatible |
 | **Max Retries** | Client default |
 
-Configuration data is persisted to a file called llm-config.json
+Configuration data is persisted to a file called `llm-config.json`.
 
 ---
 
@@ -314,12 +290,12 @@ json.dumps({
 ### Default Allow List
 
 By default, the allow list includes:
-- `ls` - List directory contents
-- `pwd` - Print working directory
+- `ls` — List directory contents
+- `pwd` — Print working directory
 
 ### User Editable
 
-Users can modify the allow list through the web app UI:
+Users can modify the allow list through the shared frontend UI:
 - **Add commands**: Enter a new command to add it to the list
 - **Remove commands**: Click the remove button next to any command
 
@@ -331,15 +307,30 @@ A toggle setting enables "Allow All" mode:
 
 ---
 
-## Design Patterns
+## Agent Architecture
 
-### 1. Client-Server Separation
+### @tool Decorator Pattern
 
-- **Client** (`page.tsx`): UI-only, no API credentials
-- **Server** (`api/chat/route.ts`): Holds API key, makes LLM calls
-- **Benefit**: API key never exposed to browser
+MAF uses the `@tool` decorator to turn Python functions into agent-accessible tools. Type hints with `Annotated` and Pydantic's `Field` provide descriptions to the model:
 
-### 2. Microsoft Agent Framework Agent Pattern
+```python
+@tool(
+    name="bash",
+    description="Execute a bash command on the server."
+)
+def bash_tool(
+    command: Annotated[str, Field(description="The bash/shell command to execute")],
+    ctx: FunctionInvocationContext,
+) -> str:
+    # ... implementation ...
+```
+
+**Key decorator options**:
+- `@tool(name=..., description=..., schema=...)` — explicit tool control with Pydantic model or JSON schema dict
+- `@tool(approval_mode="always")` — require approval before execution
+- `FunctionInvocationContext` (`ctx`) — special parameter auto-injected by MAF (not sent to model); provides `ctx.kwargs`, `ctx.session`, and methods like `ctx.add_tools()` / `ctx.remove_tools()`
+
+### Agent Pattern
 
 ```python
 from agent_framework import Agent, tool, FunctionInvocationContext
@@ -356,7 +347,6 @@ def bash_tool(
     command: Annotated[str, Field(description="The bash/shell command to execute")],
     ctx: FunctionInvocationContext,
 ) -> str:
-    """Execute a bash command and return stdout/stderr."""
     # ... implementation ...
 
 # Step 2: Create the chat client
@@ -397,24 +387,147 @@ tool_results = [tc.result for tc in tool_calls]  # Tool execution results
 - `agent.create_session()` — creates a session for multi-turn conversation history
 - `agent.run(prompt, session=session)` — runs the agent; session persists context across calls
 - `AgentResult` — contains `.text` (final response), `.tool_calls` (list of executed tools)
-- `@tool(name=..., description=..., schema=...)` — decorator for explicit tool control; can accept Pydantic model or JSON schema dict
+- `@tool(name=..., description=..., schema=...)` — decorator for explicit tool control
 - `Annotated[str, Field(description="...")]` — type hints provide parameter descriptions to the model
-- `FunctionTool(name=..., func=None, ...)` — declaration-only tools (schema sent to model, no local implementation)
-- **Middleware/Filters** — intercept agent actions (pre/post hooks on tool calls)
-- **Compaction** — built-in context-window compaction (via chat client options)
-- **Observability** — built-in OpenTelemetry tracing
-- **Tool approval** — approval-gated tool execution (for sensitive operations)
-- **Background agents** — delegate parallel sub-tasks to sub-agents
-- **Harness** — opinionated agent with batteries-included features (todo list, file memory, web search, mode switching)
 
-### 3. Tool Output Visualization
+### Harness
 
-```tsx
-result.tool_calls[]:
-  ├─ stdout → Green-tinted card with dark terminal background
-  ├─ stderr → Red-tinted card for error streams
-  └─ error  → Inline error message (execution failed)
+MAF provides a `Harness` — an opinionated agent with batteries-included features:
+
+```python
+from agent_framework import create_harness_agent
+
+harness = create_harness_agent(
+    client=client,
+    instructions="You are a helpful assistant.",
+    tools=[bash_tool],
+)
 ```
+
+**Harness features**:
+- Todo list management
+- File memory
+- Web search integration
+- Mode switching
+- Auto-approval for tools
+
+### WorkflowBuilder
+
+MAF supports multi-step orchestration via `WorkflowBuilder` and the `@workflow`/`@step` functional API:
+
+```python
+from agent_framework import WorkflowBuilder, workflow, step
+
+@workflow
+def my_workflow(input: str) -> str:
+    # Multi-step orchestration
+    pass
+```
+
+---
+
+## Session Management
+
+Sessions persist conversation context across multiple `agent.run()` calls:
+
+```python
+session = agent.create_session()
+
+# First turn
+result1 = await agent.run("Hello", session=session)
+
+# Second turn — session maintains history
+result2 = await agent.run("What did I just say?", session=session)
+```
+
+---
+
+## Production Features
+
+### Compaction
+
+Built-in context-window compaction via chat client options. When conversation exceeds token limits, MAF automatically summarizes earlier messages.
+
+```python
+client = OpenAIChatClient(
+    model="modelName",
+    base_url="baseUrl",
+    api_key="example",
+    compaction_enabled=True,  # Enable automatic compaction
+)
+```
+
+### OpenTelemetry Observability
+
+MAF provides built-in OpenTelemetry tracing for all agent actions:
+
+```python
+# MAF auto-instruments agent runs, tool calls, and LLM interactions
+# Export to any OpenTelemetry collector (Jaeger, Tempo, etc.)
+```
+
+### Middleware/Filters
+
+Intercept agent actions with pre/post hooks on tool calls:
+
+```python
+from agent_framework import Filter
+
+class ToolLoggingFilter(Filter):
+    async def on_tool_call(self, ctx, next_fn):
+        print(f"Calling tool: {ctx.kwargs.get('name')}")
+        result = await next_fn()
+        print(f"Tool result: {result[:100]}...")
+        return result
+```
+
+### Tool Approval
+
+Mark tools with `approval_mode="always"` for safety gates:
+
+```python
+@tool(approval_mode="always")
+def dangerous_tool(param: str) -> str:
+    # Requires explicit user approval before execution
+    pass
+```
+
+---
+
+## Design Patterns
+
+### 1. Backend-Only API
+
+- **API Route** (`api/chat/route.ts`): Holds API key, makes LLM calls
+- **Benefit**: API key never exposed to browser
+- The shared frontend communicates via a standardized `POST /api/chat` contract
+
+### 2. MAF Agent Pattern
+
+```python
+agent = Agent(
+    client=client,
+    name="chat-agent",
+    instructions=["You are a helpful assistant that can execute bash commands."],
+    tools=[bash_tool],
+)
+
+session = agent.create_session()
+result = await agent.run(prompt, session=session)
+```
+
+**Key differences from other frameworks**:
+- Single `Agent` primitive (not layered like CrewAI's Agent → Task → Crew)
+- Session-based context persistence (not hidden in framework internals)
+- Production features built-in: compaction, observability, middleware
+- Multi-language support: Python, C#, Go
+
+### 3. Tool Output Structure
+
+Tool results are extracted from `result.tool_calls[]`:
+- `stdout` — green-tinted output card with dark terminal background
+- `stderr` — red-tinted card for error streams
+- `error` — inline error message if execution failed
 
 ---
 
@@ -425,18 +538,11 @@ result.tool_calls[]:
   "dependencies": {
     "agent-framework": "^1.x",
     "agent-framework-openai": "^1.x",
-    "next": "16.2.10",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "next": "16.2.10 (for API routes only)"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.10",
-    "tailwindcss": "^4",
     "typescript": "^5"
   }
 }
@@ -444,75 +550,51 @@ result.tool_calls[]:
 
 ---
 
-## Development Workflow
+## Running
 
 ```bash
-# Start development server
-bun dev
-
-# Build for production
-bun build
-
-# Run production server
-bun start
+cd maf
+pip install agent-framework agent-framework-openai
+npm install
+npm run dev    # starts backend on port 5000
 ```
 
-Access at `http://localhost:3000`
+The shared frontend proxies to this backend via `shared/next.config.mjs` (`CHATLET_BACKEND=maf`). After implementing, add your port and URL to `shared/config/backends.ts`.
 
 ---
 
 ## Data Flow Summary
 
-1. **User** types prompt and clicks Send
-2. **Client** sends `POST /api/chat` with `{ prompt }`
-3. **API Route** creates an MAF `Agent` with chat client, bash tool, and instructions
-4. **API Route** creates a `session` for conversation state
-5. **Agent** calls `agent.run(prompt, session=session)`
-6. **Agent** sends context + tool definitions to the LLM via the chat client
-7. **LLM** processes prompt, may request tool calls
-8. **MAF** validates arguments, executes `bash_tool()` (30s timeout)
+1. **User** types prompt and clicks Send in the shared frontend
+2. **Frontend** sends `POST /api/chat` with `{ prompt }`
+3. **next.config.mjs** rewrites the request to `maf` backend on `:5000`
+4. **API Route** creates an MAF `Agent` with chat client, bash tool, and instructions
+5. **API Route** creates a `session` for conversation state
+6. **Agent** calls `agent.run(prompt, session=session)`
+7. **Agent** sends context + tool definitions to the LLM via the chat client
+8. **LLM** processes prompt, may request tool calls
+9. **MAF** validates arguments, executes `bash_tool()` (30s timeout)
    - **Allow List Check** verifies the base command is permitted (or "Allow All" is enabled)
-9. **Tool results** added to session context; agent loop continues
-10. **Agent** loops until LLM returns final response (no more tool calls)
-11. **API Route** returns `{ text, toolOutputs[] }` extracted from `AgentResult`
-12. **Client** displays response text and tool output cards
+10. **Tool results** added to session context; agent loop continues
+11. **Agent** loops until LLM returns final response (no more tool calls)
+12. **API Route** returns `{ text, toolOutputs[] }` extracted from `AgentResult`
+13. **Frontend** displays response text and tool output cards
 
 ---
 
-## UI Behavior
+## Multi-Language Support
 
-### Autoscroll Behavior
-- Uses `useLayoutEffect` + `setTimeout(..., 0)` pattern to autoscroll chat to bottom
-- Triggers on changes to `messages` array or `loading` state
-- Scrolls by setting `container.scrollTop = scrollHeight`
-- This is a hard jump (no smooth scrolling animation)
-- Unconditionally scrolls user back to bottom even if they scrolled up mid-conversation
-- No scroll preservation or intersection observer for smart scrolling
+MAF is available in multiple languages with identical patterns:
 
-### Chat Container Styling
-- `flex-1 min-h-0 overflow-y-auto px-8 py-6 pb-20 space-y-6`
-- `overflow-y-auto` enables scrolling
-- `pb-20` provides bottom padding so content isn't hidden behind the sticky input bar
+| Language | Package | Notes |
+|----------|---------|-------|
+| **Python** | `agent-framework` | Primary implementation, full feature parity |
+| **C#** | `Microsoft.Agents` | .NET SDK, same `Agent`/`@tool` patterns |
+| **Go** | `github.com/microsoft/agents-go` | Go SDK, idiomatic Go patterns |
 
-### Input Bar Behavior
-- `sticky bottom-0` keeps input bar fixed at bottom of chat card
-- Has `data-input-bar` attribute
-
-### Typing Indicator Animation
-- Three dots with staggered `animate-bounce` (Tailwind CSS)
-- Animation delays: 0ms, 150ms, 300ms
-
-### Other UI Effects
-- Dark mode toggle: `transition-colors` on button
-- Input field: `transition-shadow` on focus
-- Send button: `transition-all` + `active:scale-[0.98]` press feedback
-- Send button disabled state: `disabled:opacity-40`
-
-### Notes on Scrolling
-- No `smooth` scrolling — hard jump via direct scrollTop assignment
-- No scroll preservation — user is always scrolled to bottom on new messages
-- No `scrollIntoView` with `behavior: 'smooth'`
-- No intersection observer or smart scroll detection
+The Python `@tool` decorator maps to:
+- C#: `[Tool]` attribute on methods
+- Go: `tool.New()` constructor function
 
 ---
 
@@ -525,7 +607,7 @@ Access at `http://localhost:3000`
 - **Tool approval**: Mark tools with `approval_mode="always"` for safety gates
 - **Sessions**: Use `agent.create_session()` for multi-turn persistence
 - **Middleware**: Add filters for pre/post tool call hooks
-- **Observability**: Built-in OpenTelemetry tracing
+- **Observability**: Built-in OpenTelemetry tracing (already available)
 - **Multi-language**: C# and Go SDKs available for the same patterns
 - **Agent skills**: Discover and load skills from the file system
 - **Looping**: Use `loop_should_continue` predicate for iterative workflows

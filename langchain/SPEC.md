@@ -1,8 +1,12 @@
-# Simple LLM Chat Interface
+# Chatlets — LangChain.js Backend
+
+> **Note:** This is a **backend-only** implementation. The shared frontend (in `shared/`) provides the chat UI for all Chatlets. See [vercel-ai/SPEC.md](../vercel-ai/SPEC.md) for the full architecture.
+
+---
 
 ## Project Overview
 
-A minimal chat interface that connects to a OpenAI-compatible LLM with bash execution capabilities. The app allows users to send prompts and receive responses, with the LLM able to invoke a `bash` tool to execute shell commands.
+A minimal chat backend that connects to an OpenAI-compatible LLM with bash execution capabilities using LangChain.js and LangGraph.js. The app uses `createReactAgent()` for ReAct-style reasoning with tool use, backed by a checkpoint saver for state persistence across steps.
 
 ---
 
@@ -10,28 +14,25 @@ A minimal chat interface that connects to a OpenAI-compatible LLM with bash exec
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    User Browser                              │
+│              Shared Frontend (shared/)                     │
 │                                                             │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │              app/page.tsx (Client)                    │  │
-│  │  ┌─────────────┐       ┌──────────────┐              │  │
-│  │  │   Input     │──────▶│   Response   │              │  │
-│  │  │   Text +    │       │   Text Area  │              │  │
-│  │  │   Button    │       └──────────────┘              │  │
-│  │  └─────────────┘                                     │  │
-│  │        │                                             │  │
-│  │        │ fetch POST /api/chat                        │  │
-│  │        ▼                                             │  │
+│  │  Chat UI: input + response + tool output cards       │  │
 │  └───────────────────────────────────────────────────────┘  │
+│        │                                                    │
+│        │ fetch POST /api/chat                               │
+│        ▼                                                    │
+│  next.config.mjs (CHATLET_BACKEND=langchain)                │
+│  rewrites → langchain backend on :5000                     │
 └─────────────────────────────────────────────────────────────┘
                         │
-                        │ HTTP POST
+                        │ HTTP POST /api/chat { prompt }
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              app/api/chat/route.ts                          │
+│              langchain backend (port 5000)                 │
 │                                                             │
 │  ┌─────────────────┐    ┌───────────────────────────────┐   │
-│  │ createReactAgent│───▶│ bash Tool (via langchain/core)│   │
+│  │ createReactAgent│───▶│ bash Tool                   │   │
 │  │ + agent.invoke()│    │  - zod input schema          │   │
 │  │                 │    │  - execAsync(cmd, timeout)   │   │
 │  │  ┌────────────┐ │    │  - 30s timeout              │   │
@@ -51,7 +52,7 @@ A minimal chat interface that connects to a OpenAI-compatible LLM with bash exec
 └────────┼────────────────────────────────────────────────┘      │
          │                                                       │
          │ OpenAI-compatible API call                            │
-         │ max_iterations: 5                                     │
+         │ max_iterations: 5 (max tool-call cycles)              │
          │ Allow List Check                                      │
          │                                                       │
          ▼
@@ -62,45 +63,27 @@ A minimal chat interface that connects to a OpenAI-compatible LLM with bash exec
 
 ---
 
-## Mermaid Architecture Diagram
+## API Endpoints
 
-```mermaid
-graph TB
-    subgraph Browser
-        Page["app/page.tsx (Client)"]
-        Input["Input + Send Button"]
-        Response["Response Text Area"]
-        ToolCards["Tool Output Cards"]
-    end
-    
-    subgraph Server
-        API["app/api/chat/route.ts"]
-        Agent["createReactAgent + invoke()"]
-        Model["Some-LLM-Model"]
-        BashTool["bash Tool"]
-    end
-    
-    subgraph LocalLLM
-        LLM["OpenAI-compatible"]
-    end
-    
-    subgraph Shell
-        Cmd["execAsync"]
-    end
-    
-    Input --> Page
-    Page --> Response
-    Page --> ToolCards
-    Page --"POST /api/chat"--> API
-    API --> Agent
-    Agent --> Model
-    Agent --"tool call"--> BashTool
-    BashTool --"check allowed"--> AllowList["Allow List Check"]
-    AllowList --"permitted"--> Cmd
-    Cmd --"stdout/stderr"--> BashTool
-    Model --"inference"--> LLM
-    LLM --"response"--> Model
-```
+### `POST /api/chat`
+
+| Property | Value |
+|----------|-------|
+| **Content-Type** | `application/json` |
+| **Request Body** | `{ prompt: string }` |
+| **Success Response** | `{ text: string, toolOutputs: { stdout?: string, stderr?: string, error?: string }[] }` |
+| **Error Response** | `{ error: string }` |
+
+---
+
+## API Contract
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `prompt` | `string` | Yes | User's chat message |
+| `text` | `string` | Yes | LLM response text |
+| `toolOutputs` | `object[]` | No | Array of bash tool execution results |
+| `error` | `string` | No | Error message if request fails |
 
 ---
 
@@ -108,47 +91,27 @@ graph TB
 
 | Layer | Technology | Version |
 |-------|------------|---------|
-| **Framework** | Next.js | 16.2.10 (App Router) |
-| **UI** | React | 19.2.4 |
-| **AI Framework** | LangChain.js | 0.3.x |
+| **Agent Framework** | LangChain.js | 0.3.x |
+| **Agent Graph** | @langchain/langgraph | 0.2.x |
 | **Core** | @langchain/core | 0.3.x |
 | **Provider** | @langchain/openai | 0.3.x |
 | **Validation** | Zod | 3.25.0 |
-| **Styling** | Tailwind CSS | v4 |
 | **Type Safety** | TypeScript | 5.x |
-| **Fonts** | Geist Sans/Mono | (via Tailwind v4) |
 
 ---
 
 ## Key Components
 
-### `app/page.tsx`
-
-**Type**: Client Component (`'use client'`)  
-**Purpose**: Chat UI with input, response display, and tool output visualization
-
-```tsx
-useState hooks:
-  - prompt: Input field value
-  - response: LLM response text
-  - toolOutputs: Array of bash tool execution results
-  - loading: Button/input disabled state
-
-send():
-  - POST to /api/chat with { prompt }
-  - Update response and toolOutputs on success
-```
-
 ### `app/api/chat/route.ts`
 
-**Type**: Server API Route (POST)  
-**Purpose**: Orchestrate LLM inference and tool execution
+**Type**: API Route (POST)  
+**Purpose**: Orchestrate LLM inference and tool execution via `createReactAgent()`
 
-```tsx
+```ts
 Key imports:
   - ChatOpenAI from @langchain/openai
   - { createReactAgent } from "@langchain/langgraph"
-  - { ToolMessage, AIMessage } from "@langchain/core/messages"
+  - { ToolMessage, AIMessage, HumanMessage } from "@langchain/core/messages"
   - { z } from "zod"
 
 Key exports:
@@ -158,22 +121,33 @@ Configuration:
   - model: ChatOpenAI with openai-compatible baseURL
   - tools: [bashTool]
   - maxIterations: 5
+  - checkpointSaver: MemorySaver / SqliteSaver / PostgresSaver
 ```
 
-### `app/globals.css`
+### Bash Tool
 
-**Type**: Global Styles  
-**Purpose**: Tailwind v4 setup with system theme detection
+**Type**: LangChain Tool (`extends Tool`)  
+**Purpose**: Safely execute shell commands with allow-list enforcement
 
-```css
-Tailwind v4 syntax:
-  @import "tailwindcss"
-  @theme inline { ... }
+```ts
+import { Tool } from "@langchain/core/tools";
+import { z } from "zod";
 
-Features:
-  - System color scheme detection (light/dark)
-  - CSS custom properties for theming
-  - Geist font family configuration
+class BashTool extends Tool {
+  name = "bash";
+  description = `Execute a bash command on the server. You MUST provide a "command"
+  parameter with the exact shell command to run. This is the ONLY way to run
+  commands. For example: command="pwd", command="ls -la", command="npm run build".`;
+
+  schema = z.object({
+    command: z.string().describe('The bash/shell command to execute'),
+  });
+
+  async _call(input: z.infer<typeof this.schema>): Promise<string> {
+    const { command } = input;
+    // ... execute and return result
+  }
+}
 ```
 
 ---
@@ -199,7 +173,7 @@ const model = new ChatOpenAI({
 | **Provider Type** | OpenAI-compatible (via `@langchain/openai`) |
 | **Max Retries** | `0` (no retries) |
 
-Configuration data is persisted to a file called llm-config.json
+Configuration data is persisted to a file called `llm-config.json`.
 
 ---
 
@@ -213,14 +187,14 @@ import { Tool } from "@langchain/core/tools";
 
 class BashTool extends Tool {
   name = "bash";
-  description = `Execute a bash command on the server. You MUST provide a "command" 
-  parameter with the exact shell command to run. This is the ONLY way to run 
+  description = `Execute a bash command on the server. You MUST provide a "command"
+  parameter with the exact shell command to run. This is the ONLY way to run
   commands. For example: command="pwd", command="ls -la", command="npm run build".`;
-  
+
   schema = z.object({
     command: z.string().describe('The bash/shell command to execute'),
   });
-  
+
   async _call(input: z.infer<typeof this.schema>): Promise<string> {
     const { command } = input;
     // ... execute and return result
@@ -267,12 +241,12 @@ JSON.stringify({
 ### Default Allow List
 
 By default, the allow list includes:
-- `ls` - List directory contents
-- `pwd` - Print working directory
+- `ls` — List directory contents
+- `pwd` — Print working directory
 
 ### User Editable
 
-Users can modify the allow list through the web app UI:
+Users can modify the allow list through the shared frontend UI:
 - **Add commands**: Enter a new command to add it to the list
 - **Remove commands**: Click the remove button next to any command
 
@@ -284,22 +258,58 @@ A toggle setting enables "Allow All" mode:
 
 ---
 
-## Design Patterns
+## Checkpointing & State Management
 
-### 1. Client-Server Separation
+LangGraph agents use checkpointing for state persistence across steps. This enables multi-turn conversations and resumable agent execution.
 
-- **Client** (`page.tsx`): UI-only, no API credentials
-- **Server** (`api/chat/route.ts`): Holds API key, makes LLM calls
-- **Benefit**: API key never exposed to browser
-
-### 2. LangChain Agent Pattern
-
-```tsx
+```ts
 const agent = createReactAgent({
   llm: model,
   tools: [bashTool],
   checkpointSaver: new MemorySaver(),  // or SqliteSaver / PostgresSaver
-  messageWriter: StdOut,  // optional
+  messageWriter: undefined,  // optional: write messages to stdout
+});
+
+const result = await agent.invoke({
+  messages: [new HumanMessage(prompt)],
+}, {
+  configurable: {
+    thread_id: "chat-session-id",
+  },
+});
+```
+
+**Checkpoint Saver Options**:
+
+| Saver | Use Case | Persistence |
+|-------|----------|-------------|
+| `MemorySaver` | Development, single-process | In-memory, lost on restart |
+| `SqliteSaver` | Production, single-machine | SQLite file, survives restarts |
+| `PostgresSaver` | Production, distributed | PostgreSQL, thread-safe across processes |
+
+**Key message objects**:
+- `HumanMessage` — user's prompt text
+- `AIMessage` — LLM's response (may include tool calls)
+- `ToolMessage` — bash tool execution result (stdout/stderr/error)
+
+---
+
+## Design Patterns
+
+### 1. Backend-Only API
+
+- **API Route** (`api/chat/route.ts`): Holds API key, makes LLM calls
+- **Benefit**: API key never exposed to browser
+- The shared frontend communicates via a standardized `POST /api/chat` contract
+
+### 2. LangChain Agent Pattern
+
+```ts
+const agent = createReactAgent({
+  llm: model,
+  tools: [bashTool],
+  checkpointSaver: new MemorySaver(),  // or SqliteSaver / PostgresSaver
+  messageWriter: undefined,  // optional
 });
 
 const result = await agent.invoke({
@@ -317,14 +327,12 @@ const result = await agent.invoke({
 - `createReactAgent` provides ReAct-style reasoning with tool use
 - `maxIterations` limits the number of tool call/response cycles
 
-### 3. Tool Output Visualization
+### 3. Tool Output Structure
 
-```tsx
-result.messages[].toolCalls[]:
-  ├─ stdout → Green-tinted card with dark terminal background
-  ├─ stderr → Red-tinted card for error streams
-  └─ error  → Inline error message (execution failed)
-```
+Tool results are extracted from `result.messages[]` as `ToolMessage` objects containing:
+- `stdout` — green-tinted output card with dark terminal background
+- `stderr` — red-tinted card for error streams
+- `error` — inline error message if execution failed
 
 ---
 
@@ -337,18 +345,12 @@ result.messages[].toolCalls[]:
     "@langchain/langgraph": "^0.2.x",
     "@langchain/openai": "^0.3.x",
     "zod": "^3.25.0",
-    "next": "16.2.10",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "next": "16.2.10 (for API routes only)"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
-    "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.10",
-    "tailwindcss": "^4",
     "typescript": "^5"
   }
 }
@@ -356,72 +358,51 @@ result.messages[].toolCalls[]:
 
 ---
 
-## Development Workflow
+## Running
 
 ```bash
-# Start development server
-bun dev
-
-# Build for production
-bun build
-
-# Run production server
-bun start
+cd langchain
+npm install
+npm run dev    # starts backend on port 5000
 ```
 
-Access at `http://localhost:3000`
+The shared frontend proxies to this backend via `shared/next.config.mjs` (`CHATLET_BACKEND=langchain`). After implementing, add your port and URL to `shared/config/backends.ts`.
 
 ---
 
 ## Data Flow Summary
 
-1. **User** types prompt and clicks Send
-2. **Client** sends `POST /api/chat` with `{ prompt }`
-3. **API Route** creates a LangGraph agent via `createReactAgent()` with the LLM + bash tool
-4. **Agent** invokes the LLM with the user's prompt
-5. **LLM** processes prompt, may call bash tool (up to 5 iterations)
-6. **Bash Tool** executes command via `execAsync()` (30s timeout)
+1. **User** types prompt and clicks Send in the shared frontend
+2. **Frontend** sends `POST /api/chat` with `{ prompt }`
+3. **next.config.mjs** rewrites the request to `langchain` backend on `:5000`
+4. **API Route** creates a LangGraph agent via `createReactAgent()` with LLM + bash tool
+5. **Agent** invokes the LLM with `[new HumanMessage(prompt)]`
+6. **LLM** processes prompt, may call bash tool (up to `maxIterations: 5`)
+7. **Bash Tool** executes command via `execAsync()` (30s timeout)
    - **Allow List Check** verifies the base command is permitted (or "Allow All" is enabled)
-7. **Agent** collects tool results and continues until final answer
-8. **API Route** returns `{ text, toolOutputs[] }` extracted from agent messages
-9. **Client** displays response text and tool output cards
+8. **Agent** collects tool results (as `ToolMessage` objects) and continues until final answer
+9. **API Route** returns `{ text, toolOutputs[] }` extracted from agent messages
+10. **Frontend** displays response text and tool output cards
 
 ---
 
-## UI Behavior
+## Streaming Considerations
 
-### Autoscroll Behavior
-- Uses `useLayoutEffect` + `setTimeout(..., 0)` pattern to autoscroll chat to bottom
-- Triggers on changes to `messages` array or `loading` state
-- Scrolls by setting `container.scrollTop = scrollHeight`
-- This is a hard jump (no smooth scrolling animation)
-- Unconditionally scrolls user back to bottom even if they scrolled up mid-conversation
-- No scroll preservation or intersection observer for smart scrolling
+LangChain.js supports streaming via `StreamEvents` from `@langchain/core`:
 
-### Chat Container Styling
-- `flex-1 min-h-0 overflow-y-auto px-8 py-6 pb-20 space-y-6`
-- `overflow-y-auto` enables scrolling
-- `pb-20` provides bottom padding so content isn't hidden behind the sticky input bar
+```ts
+// Streaming approach (future enhancement)
+for await (const event of streamEvents) {
+  if (event.event === "on_chat_model_stream") {
+    // Stream token to client via SSE
+  }
+  if (event.event === "on_tool_start") {
+    // Emit tool invocation event
+  }
+}
+```
 
-### Input Bar Behavior
-- `sticky bottom-0` keeps input bar fixed at bottom of chat card
-- Has `data-input-bar` attribute
-
-### Typing Indicator Animation
-- Three dots with staggered `animate-bounce` (Tailwind CSS)
-- Animation delays: 0ms, 150ms, 300ms
-
-### Other UI Effects
-- Dark mode toggle: `transition-colors` on button
-- Input field: `transition-shadow` on focus
-- Send button: `transition-all` + `active:scale-[0.98]` press feedback
-- Send button disabled state: `disabled:opacity-40`
-
-### Notes on Scrolling
-- No `smooth` scrolling — hard jump via direct scrollTop assignment
-- No scroll preservation — user is always scrolled to bottom on new messages
-- No `scrollIntoView` with `behavior: 'smooth'`
-- No intersection observer or smart scroll detection
+Manual SSE + `StreamEvents` provides granular control over streaming tokens and tool outputs, unlike Vercel AI SDK's built-in `useChat` streaming.
 
 ---
 
@@ -438,7 +419,7 @@ Access at `http://localhost:3000`
 
 ---
 
-## LangChain vs Vercel AI SDK: Key Mapping
+## LangChain.js vs Vercel AI SDK: Key Mapping
 
 | Vercel AI SDK | LangChain.js Equivalent |
 |---------------|------------------------|
@@ -450,3 +431,16 @@ Access at `http://localhost:3000`
 | Built-in streaming (`useChat`) | Manual SSE + `StreamEvents` |
 | Auto message history | Explicit `HumanMessage`/`AIMessage` management |
 | Memory state | `MemorySaver` / `CheckpointSaver` |
+
+## LangChain.js vs CrewAI: Key Mapping
+
+| CrewAI | LangChain.js Equivalent |
+|--------|------------------------|
+| `new Agent()` | Implicit in `createReactAgent()` |
+| `new Task()` | Passed as messages to `agent.invoke()` |
+| `new Crew()` | Replaced by `createReactAgent()` graph |
+| `crew.kickoff()` | `agent.invoke({ messages })` |
+| `class extends Tool` | `class extends Tool` (identical pattern) |
+| `maxIter: 5` | `maxIterations: 5` |
+| CrewAI memory | `MemorySaver` / `SqliteSaver` |
+| `crew.stream()` | `StreamEvents` iteration |

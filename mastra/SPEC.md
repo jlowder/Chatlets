@@ -1,8 +1,12 @@
-# Simple LLM Chat Interface
+# Chatlets — Mastra Backend
+
+> **Note:** This is a **backend-only** implementation. The shared frontend (in `shared/`) provides the chat UI for all Chatlets. See [vercel-ai/SPEC.md](../vercel-ai/SPEC.md) for the full architecture.
+
+---
 
 ## Project Overview
 
-A minimal chat interface that connects to a OpenAI-compatible LLM with bash execution capabilities using the Mastra framework. The app allows users to send prompts and receive responses, with the LLM able to invoke a `bash` tool to execute shell commands.
+A minimal chat backend that connects to an OpenAI-compatible LLM with bash execution capabilities using the Mastra framework. An `Agent` is defined with a model, instructions, and tools, then invoked via `agent.generate()`. Mastra provides production-grade features: model routing (40+ providers), memory, signals, workflows, and observability.
 
 ---
 
@@ -10,29 +14,26 @@ A minimal chat interface that connects to a OpenAI-compatible LLM with bash exec
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    User Browser                              │
+│              Shared Frontend (shared/)                     │
 │                                                             │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │              app/page.tsx (Client)                    │  │
-│  │  ┌─────────────┐       ┌──────────────┐              │  │
-│  │  │   Input     │──────▶│   Response   │              │  │
-│  │  │   Text +    │       │   Text Area  │              │  │
-│  │  │   Button    │       └──────────────┘              │  │
-│  │  └─────────────┘                                     │  │
-│  │        │                                             │  │
-│  │        │ fetch POST /api/chat                        │  │
-│  │        ▼                                             │  │
+│  │  Chat UI: input + response + tool output cards       │  │
 │  └───────────────────────────────────────────────────────┘  │
+│        │                                                    │
+│        │ fetch POST /api/chat                               │
+│        ▼                                                    │
+│  next.config.mjs (CHATLET_BACKEND=mastra)                   │
+│  rewrites → mastra backend on :5000                        │
 └─────────────────────────────────────────────────────────────┘
                         │
-                        │ HTTP POST
+                        │ HTTP POST /api/chat { prompt }
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              app/api/chat/route.ts                          │
+│              mastra backend (port 5000)                    │
 │                                                             │
 │  ┌─────────────────┐    ┌───────────────────────────────┐   │
 │  │ agent.generate()│───▶│ bash Tool (via Mastra)       │   │
-│  │                 │    │  - Zod inputSchema           │   │
+│  │                 │    │  - createTool() + Zod        │   │
 │  │  ┌────────────┐ │    │  - execAsync(cmd, timeout)   │   │
 │  │  │   prompt   │ │    │  - 30s timeout              │   │
 │  │  └────────────┘ │    │  - returns stdout/stderr     │   │
@@ -50,58 +51,39 @@ A minimal chat interface that connects to a OpenAI-compatible LLM with bash exec
 │        │                                               │      │
 └────────┼────────────────────────────────────────────────┘      │
          │                                                       │
-         │ OpenAI-compatible API call                            │
-         │ maxSteps: 5                                           │
+         │ OpenAI-compatible API call via Model Router          │
+         │ maxSteps: 5 (multi-step reasoning)                    │
          │ Allow List Check                                      │
          │                                                       │
          ▼
 ┌────────────────────────────────────────────────────────────────────┐
-│                    LLM via URL (Model Router)                      │
+│                    LLM via Model Router (40+ providers)           │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Mermaid Architecture Diagram
+## API Endpoints
 
-```mermaid
-graph TB
-    subgraph Browser
-        Page["app/page.tsx (Client)"]
-        Input["Input + Send Button"]
-        Response["Response Text Area"]
-        ToolCards["Tool Output Cards"]
-    end
-    
-    subgraph Server
-        API["app/api/chat/route.ts"]
-        Agent["agent.generate()"]
-        Model["Some-LLM-Model"]
-        BashTool["bash Tool"]
-    end
-    
-    subgraph Mastra
-        Router["Model Router (openai-compatible)"]
-        MastraInst["Mastra Instance"]
-    end
-    
-    subgraph Shell
-        Cmd["execAsync"]
-    end
-    
-    Input --> Page
-    Page --> Response
-    Page --> ToolCards
-    Page --"POST /api/chat"--> API
-    API --> Agent
-    Agent --> Router
-    Agent --"tool call"--> BashTool
-    BashTool --"check allowed"--> AllowList["Allow List Check"]
-    AllowList --"permitted"--> Cmd
-    Cmd --"stdout/stderr"--> BashTool
-    Router --"inference"--> Model
-    Model --"response"--> Router
-```
+### `POST /api/chat`
+
+| Property | Value |
+|----------|-------|
+| **Content-Type** | `application/json` |
+| **Request Body** | `{ prompt: string }` |
+| **Success Response** | `{ text: string, toolOutputs: { stdout?: string, stderr?: string, error?: string }[] }` |
+| **Error Response** | `{ error: string }` |
+
+---
+
+## API Contract
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `prompt` | `string` | Yes | User's chat message |
+| `text` | `string` | Yes | LLM response text |
+| `toolOutputs` | `object[]` | No | Array of bash tool execution results |
+| `error` | `string` | No | Error message if request fails |
 
 ---
 
@@ -109,42 +91,21 @@ graph TB
 
 | Layer | Technology | Version |
 |-------|------------|---------|
-| **Framework** | Next.js | 16.2.10 (App Router) |
-| **UI** | React | 19.2.4 |
 | **Agent Framework** | @mastra/core | Latest |
 | **Model Provider** | @ai-sdk/openai-compatible-v6 | (via Mastra Model Router) |
 | **Validation** | Zod | 3.25.0 |
-| **Styling** | Tailwind CSS | v4 |
 | **Type Safety** | TypeScript | 5.x |
-| **Fonts** | Geist Sans/Mono | (via Tailwind v4) |
 
 ---
 
 ## Key Components
 
-### `app/page.tsx`
-
-**Type**: Client Component (`'use client'`)  
-**Purpose**: Chat UI with input, response display, and tool output visualization
-
-```tsx
-useState hooks:
-  - prompt: Input field value
-  - response: LLM response text
-  - toolOutputs: Array of bash tool execution results
-  - loading: Button/input disabled state
-
-send():
-  - POST to /api/chat with { prompt }
-  - Update response and toolOutputs on success
-```
-
 ### `app/api/chat/route.ts`
 
-**Type**: Server API Route (POST)  
+**Type**: API Route (POST)  
 **Purpose**: Orchestrate LLM inference and tool execution via Mastra Agent
 
-```tsx
+```ts
 Key exports:
   - POST(req: NextRequest)
 
@@ -155,48 +116,41 @@ Configuration:
   - maxSteps: 5
 ```
 
-### `mastra/agent.ts` (or inline agent)
+### Agent Definition
 
-**Purpose**: Define the Mastra Agent with model and tools
+**Type**: `Agent` class from `@mastra/core`  
+**Purpose**: Define an agent with model, instructions, and tools
 
 ```ts
-Agent config:
-  - id: 'chat-agent'
-  - name: 'Chat Agent'
-  - instructions: 'You are a helpful assistant. Use the bash tool when necessary.'
-  - model: openaiCompatible('modelName', { baseURL, apiKey })
-  - tools: { bash: bashTool }
+import { Agent } from '@mastra/core/agent';
+
+const agent = new Agent({
+  id: 'chat-agent',
+  name: 'Chat Agent',
+  instructions: 'You are a helpful assistant. Use the bash tool when necessary.',
+  model: openaiCompatible('modelName', { baseURL, apiKey }),
+  tools: { bash: bashTool },
+});
 ```
 
-### `mastra/tools/bash.ts`
+### Bash Tool
 
-**Purpose**: Define the bash execution tool using Mastra's `createTool`
+**Type**: `createTool()` from `@mastra/core/tools`  
+**Purpose**: Define a tool with Zod input schema and execute function
 
 ```ts
-createTool({
+import { createTool } from '@mastra/core/tools';
+import { z } from 'zod';
+
+const bashTool = createTool({
   id: 'bash',
-  description: 'Execute a bash command on the server.',
+  description: `Execute a bash command on the server. You MUST provide a "command"
+  parameter with the exact shell command to run.`,
   inputSchema: z.object({
     command: z.string().describe('The bash/shell command to execute'),
   }),
-  execute: async ({ command }) => { ... }
-})
-```
-
-### `app/globals.css`
-
-**Type**: Global Styles  
-**Purpose**: Tailwind v4 setup with system theme detection
-
-```css
-Tailwind v4 syntax:
-  @import "tailwindcss"
-  @theme inline { ... }
-
-Features:
-  - System color scheme detection (light/dark)
-  - CSS custom properties for theming
-  - Geist font family configuration
+  execute: async ({ command }, context) => { ... }
+});
 ```
 
 ---
@@ -301,12 +255,12 @@ The bash tool enforces an allow list that restricts which commands can be execut
 ### Default Allow List
 
 By default, the allow list includes:
-- `ls` - List directory contents
-- `pwd` - Print working directory
+- `ls` — List directory contents
+- `pwd` — Print working directory
 
 ### User Editable
 
-Users can modify the allow list through the web app UI:
+Users can modify the allow list through the shared frontend UI:
 - **Add commands**: Enter a new command to add it to the list
 - **Remove commands**: Click the remove button next to any command
 
@@ -318,17 +272,118 @@ A toggle setting enables "Allow All" mode:
 
 ---
 
+## Mastra Architecture
+
+### Model Router
+
+Mastra's Model Router abstracts LLM providers, supporting **40+ providers** through a unified interface:
+
+```ts
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible-v6';
+import { Mastra } from '@mastra/core';
+
+const provider = createOpenAICompatible({
+  name: 'custom-provider',
+  baseURL: 'https://api.example.com/v1',
+  apiKey: process.env.API_KEY,
+});
+
+const mastra = new Mastra({
+  engines: {},
+  // Register provider with Model Router
+});
+```
+
+**Key benefits**:
+- Switch providers without changing agent code
+- Unified configuration across OpenAI, Anthropic, Google, Azure, and 40+ others
+- OpenAI-compatible endpoint support via `@ai-sdk/openai-compatible-v6`
+
+### Agent Pattern
+
+```ts
+import { Agent } from '@mastra/core/agent';
+
+const agent = new Agent({
+  id: 'chat-agent',
+  name: 'Chat Agent',
+  instructions: 'You are a helpful assistant that can execute bash commands.',
+  model: provider.chatModel('modelName'),
+  tools: { bash: bashTool },
+});
+
+const result = await agent.generate(prompt, { maxSteps: 5 });
+```
+
+### Memory
+
+Mastra provides built-in memory for conversation persistence:
+
+```ts
+import { Memory } from '@mastra/core/memory';
+
+const memory = new Memory({
+  mastra,
+  storage: new SQLiteStorage(),  // or InMemoryStorage for dev
+});
+
+// Attach to agent
+const agent = new Agent({
+  id: 'chat-agent',
+  memory: memory,
+  // ...
+});
+```
+
+### Signals
+
+Signals enable real-time event streaming between agents and workflows:
+
+```ts
+import { Mastra } from '@mastra/core';
+import { Subject } from 'rxjs';
+
+const mastra = new Mastra({
+  // Signals configuration
+});
+
+// Subscribe to agent events
+const subscription = mastra.signals.subscribe('agent:generate', (event) => {
+  console.log('Agent step:', event);
+});
+```
+
+### Workflows
+
+Mastra integrates workflows for multi-step orchestration:
+
+```ts
+import { Workflow, step } from '@mastra/core/workflows';
+
+const workflow = new Workflow({ name: 'chat-workflow' })
+  .step({
+    id: 'generate',
+    validate: false,
+    run: async ({ context }) => {
+      return await agent.generate(context.input, { maxSteps: 5 });
+    },
+  })
+  .commit();
+```
+
+---
+
 ## Design Patterns
 
-### 1. Client-Server Separation
+### 1. Backend-Only API
 
-- **Client** (`page.tsx`): UI-only, no API credentials
-- **Server** (`api/chat/route.ts`): Holds API key, invokes Mastra Agent
+- **API Route** (`api/chat/route.ts`): Holds API key, invokes Mastra Agent
 - **Benefit**: API key never exposed to browser
+- The shared frontend communicates via a standardized `POST /api/chat` contract
 
 ### 2. Mastra Agent Tool Calling
 
-```tsx
+```ts
 const agent = new Agent({
   id: 'chat-agent',
   name: 'Chat Agent',
@@ -340,92 +395,16 @@ const agent = new Agent({
 const result = await agent.generate(prompt, { maxSteps: 5 });
 ```
 
-### 3. Tool Output Visualization
+### 3. Tool Output Structure
 
-```tsx
-result.toolResults[] (from Mastra FullOutput):
-  ├─ stdout → Green-tinted card with dark terminal background
-  ├─ stderr → Red-tinted card for error streams
-  └─ error  → Inline error message (execution failed)
-```
+Tool results are extracted from `result.toolResults[]` (from Mastra `FullOutput`):
+- `stdout` — green-tinted output card with dark terminal background
+- `stderr` — red-tinted card for error streams
+- `error` — inline error message if execution failed
 
 ---
 
-## Key Dependencies
-
-```json
-{
-  "dependencies": {
-    "@mastra/core": "latest",
-    "@ai-sdk/openai-compatible-v6": "latest",
-    "ai": "^7.0.34",
-    "zod": "^3.25.0",
-    "next": "16.2.10",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
-  },
-  "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.10",
-    "tailwindcss": "^4",
-    "typescript": "^5"
-  }
-}
-```
-
----
-
-## Development Workflow
-
-```bash
-# Start development server
-bun dev
-
-# Build for production
-bun build
-
-# Run production server
-bun start
-```
-
-Access at `http://localhost:3000`
-
----
-
-## Data Flow Summary
-
-1. **User** types prompt and clicks Send
-2. **Client** sends `POST /api/chat` with `{ prompt }`
-3. **API Route** creates/gets Mastra Agent and calls `agent.generate(prompt, { maxSteps: 5 })`
-4. **Agent** processes prompt, may call bash tool (up to 5 steps)
-5. **Bash Tool** executes command via `execAsync()` (30s timeout)
-   - **Allow List Check** verifies the base command is permitted (or "Allow All" is enabled)
-6. **Agent** returns `FullOutput` with `text` and `toolResults[]`
-7. **API Route** returns `{ text, toolOutputs[] }`
-8. **Client** displays response text and tool output cards
-
----
-
-## Mastra-Specific Differences from Vercel AI SDK
-
-| Aspect | Vercel AI SDK | Mastra |
-|--------|---------------|--------|
-| **Tool Definition** | `tool()` from `ai` | `createTool()` from `@mastra/core/tools` |
-| **Tool Schema** | `parameters: z.object(...)` | `inputSchema: z.object(...)` |
-| **Tool Execution** | `execute: async ({ command }) =>` | `execute: async ({ command }, context) =>` |
-| **Model Config** | `createOpenAICompatible()('model', {})` | `{ id: 'provider/model', url, apiKey }` or `provider.chatModel('model')` |
-| **Agent Invocation** | `generateText({ model, prompt, tools, maxSteps })` | `agent.generate(messages, { maxSteps })` |
-| **Result Structure** | `result.text`, `result.steps[]` | `result.text`, `result.toolResults[]` |
-| **Multiple Tool Schemas** | Vercel SDK v3/v4/v5 schemas via `parameters` | Mastra uses StandardSchema (Zod v4) via `inputSchema`; also supports Vercel `tool()` helper |
-| **Agent Lifecycle** | Stateless per-call | Agent instance with optional memory, signals, workflows |
-| **Max Steps** | `maxSteps: 5` in `generateText()` | `maxSteps: 5` in `agent.generate()` options |
-| **LLM Calls** | Direct to provider | Via Mastra Model Router (supports 40+ providers) |
-
-### Agent Generation Result
+## Generation Result
 
 ```ts
 const result = await agent.generate(prompt, { maxSteps: 5 });
@@ -439,83 +418,51 @@ const result = await agent.generate(prompt, { maxSteps: 5 });
 
 ---
 
-## UI Behavior
+## Key Dependencies
 
-### Autoscroll Behavior
-
-- Uses `useLayoutEffect` + `setTimeout(..., 0)` pattern to autoscroll chat to bottom
-- Triggers on changes to `messages` array or `loading` state (dependency: `[messages, loading]`)
-- Scrolls by directly setting `container.scrollTop = container.scrollHeight`
-- This is a **hard jump** — no smooth scrolling animation
-- **Unconditionally** scrolls user back to bottom even if they scrolled up mid-conversation
-- No scroll preservation or intersection observer for smart scrolling
-
-```tsx
-useLayoutEffect(() => {
-  setTimeout(() => {
-    const container = chatRef.current;
-    if (container) {
-      container.scrollTop = container.scrollHeight;
-    }
-  }, 0);
-}, [messages, loading]);
-```
-
-### Chat Container Styling
-
-- Class: `flex-1 min-h-0 overflow-y-auto px-8 py-6 pb-20 space-y-6`
-- `flex-1 min-h-0` — flex growth with proper shrink behavior in parent flex column
-- `overflow-y-auto` — enables vertical scrolling
-- `px-8 py-6` — padding around message content
-- `pb-20` — bottom padding so content isn't hidden behind the sticky input bar
-- `space-y-6` — vertical spacing between message blocks
-
-### Input Bar Behavior
-
-- `sticky bottom-0` keeps input bar fixed at bottom of chat card
-- Positioned with `border-t`, `bg`, and padding for visual separation
-- Has `data-input-bar` attribute (useful for testing/selector targeting)
-- Always visible above the footer, overlaying chat content at the bottom
-
-### Typing Indicator Animation
-
-Three dots with staggered `animate-bounce` from Tailwind CSS:
-- Animation delays: **0ms**, **150ms**, **300ms** (via inline `style` prop)
-- Dot size: `w-2 h-2 rounded-full`
-- Color varies by theme: `bg-zinc-500` (dark) / `bg-zinc-400` (light)
-
-```tsx
-function TypingIndicator({ dark }: { dark: boolean }) {
-  const dotColor = dark ? 'bg-zinc-500' : 'bg-zinc-400';
-  return (
-    <div className="flex items-center gap-1">
-      <span className={`w-2 h-2 rounded-full ${dotColor} animate-bounce`} style={{ animationDelay: '0ms' }} />
-      <span className={`w-2 h-2 rounded-full ${dotColor} animate-bounce`} style={{ animationDelay: '150ms' }} />
-      <span className={`w-2 h-2 rounded-full ${dotColor} animate-bounce`} style={{ animationDelay: '300ms' }} />
-    </div>
-  );
+```json
+{
+  "dependencies": {
+    "@mastra/core": "latest",
+    "@ai-sdk/openai-compatible-v6": "latest",
+    "ai": "^7.0.34",
+    "zod": "^3.25.0",
+    "next": "16.2.10 (for API routes only)"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "eslint": "^9",
+    "typescript": "^5"
+  }
 }
 ```
 
-### Other UI Effects
+---
 
-| Element | Transition / Effect |
-|---------|---------------------|
-| Dark mode toggle button | `transition-colors` on button |
-| Input textarea | `transition-shadow` on focus (ring animation) |
-| Send button | `transition-all` + `active:scale-[0.98]` press feedback |
-| Send button (disabled) | `disabled:opacity-40 disabled:cursor-not-allowed` |
+## Running
+
+```bash
+cd mastra
+npm install
+npm run dev    # starts backend on port 5000
+```
+
+The shared frontend proxies to this backend via `shared/next.config.mjs` (`CHATLET_BACKEND=mastra`). After implementing, add your port and URL to `shared/config/backends.ts`.
 
 ---
 
-## Notes on Scrolling
+## Data Flow Summary
 
-- **No smooth scrolling** — hard jump via direct `scrollTop` assignment
-- **No scroll preservation** — user is always scrolled to bottom on new messages
-- **No `scrollIntoView`** with `behavior: 'smooth'`
-- **No intersection observer** or smart scroll detection
-- The `useLayoutEffect` + `setTimeout(..., 0)` pattern is used to defer the scroll to the next paint after React has committed the DOM updates
-- Test files exist (`test-scroll.mjs`, `test-scroll2.mjs`) suggesting scroll behavior was previously tested/investigated
+1. **User** types prompt and clicks Send in the shared frontend
+2. **Frontend** sends `POST /api/chat` with `{ prompt }`
+3. **next.config.mjs** rewrites the request to `mastra` backend on `:5000`
+4. **API Route** creates/gets Mastra Agent and calls `agent.generate(prompt, { maxSteps: 5 })`
+5. **Agent** processes prompt, may call bash tool (up to 5 steps)
+6. **Bash Tool** executes command via `execAsync()` (30s timeout)
+   - **Allow List Check** verifies the base command is permitted (or "Allow All" is enabled)
+7. **Agent** returns `FullOutput` with `text` and `toolResults[]`
+8. **API Route** returns `{ text, toolOutputs[] }`
+9. **Frontend** displays response text and tool output cards
 
 ---
 
@@ -530,3 +477,100 @@ function TypingIndicator({ dark }: { dark: boolean }) {
 - Support streaming tool outputs
 - Add observability/tracing via Mastra Observability
 - Leverage Mastra's MCP server capabilities for tool exposure
+
+---
+
+## Mastra vs Vercel AI SDK: Key Mapping
+
+| Vercel AI SDK | Mastra |
+|---------------|--------|
+| `generateText()` | `agent.generate(messages, { maxSteps })` |
+| `tool({ parameters, execute })` | `createTool({ inputSchema, execute })` |
+| `maxSteps: 5` | `maxSteps: 5` in `agent.generate()` options |
+| Tool result as object | Tool result in `result.toolResults[]` |
+| Built-in streaming (`useChat`) | `agent.stream()` with `onChunk` |
+| Auto message history | `Memory` + `SQLiteStorage` |
+| Implicit tool routing | Agent loop with `tools` map |
+| `ai` package | `@mastra/core` + `@ai-sdk/openai-compatible-v6` |
+| Stateless per-call | Agent instance with memory, signals, workflows |
+
+## Mastra vs LangChain: Key Mapping
+
+| LangChain (createReactAgent) | Mastra |
+|------------------------------|--------|
+| `createReactAgent({ llm, tools })` | `new Agent({ model, instructions, tools })` |
+| `StateGraph` with nodes/edges | Implicit agent loop in `agent.generate()` |
+| `maxIterations: 5` | `maxSteps: 5` |
+| `MemorySaver` | `Memory` + `SQLiteStorage` |
+| `invoke()` | `agent.generate()` |
+| `stream()` | `agent.stream()` |
+| `HumanMessage`/`AIMessage` | Internal message handling |
+| `thread_id` in configurable | Session-based in `Memory` |
+| `class extends Tool` | `createTool({ inputSchema, execute })` |
+
+## Mastra vs CrewAI: Key Mapping
+
+| CrewAI | Mastra |
+|--------|--------|
+| `Crew.kickoff()` | `agent.generate()` |
+| `Agent` + `Task` + `Crew` | Single `Agent` with tools |
+| 3-layer abstraction | 1-layer: Agent with optional Memory/Workflows |
+| `maxIter: 5` | `maxSteps: 5` |
+| Tool as class | `createTool({ inputSchema, execute })` |
+| Sequential process | Agent loop (implicit) |
+| Role/goal/backstory | `instructions` string |
+
+## Mastra vs Agno: Key Mapping
+
+| Agno | Mastra |
+|------|--------|
+| `Agent.run(user=prompt)` | `agent.generate(prompt)` |
+| Python function as tool | `createTool({ inputSchema, execute })` |
+| `tool_call_limit=5` | `maxSteps: 5` |
+| `RunOutput` | `FullOutput` |
+| `stream=True` | `agent.stream()` |
+| `session_id` | `Memory` + session management |
+| Automatic agent loop | Automatic agent loop |
+| `Agent` (1 primitive) | `Agent` + `Memory` + `Workflow` + `Signals` |
+| `Team` / `Workflow` primitives | `Workflow` class |
+
+## Mastra vs LangGraph: Key Mapping
+
+| LangGraph | Mastra |
+|-----------|--------|
+| `StateGraph().addNode().compile()` | `agent.generate()` (implicit) |
+| `Annotation.Root` state | Internal message state |
+| `maxIter: 5` | `maxSteps: 5` |
+| `MemorySaver` | `Memory` + `SQLiteStorage` |
+| `invoke()` | `agent.generate()` |
+| `stream()` | `agent.stream()` |
+| Explicit nodes/edges | Implicit agent loop |
+| `interrupt` (HITL) | `Workflow` step control |
+| Python + JS | TypeScript-only |
+
+## Mastra vs LlamaIndex Workflows: Key Mapping
+
+| LlamaIndex Workflows | Mastra |
+|---------------------|--------|
+| `Workflow.run(input=...)` | `agent.generate(prompt)` |
+| `@step` functions with typed events | `workflow.step()` with async run |
+| `Event` classes | Internal state objects |
+| `ctx.store` | `Memory` + storage engine |
+| `timeout=120` | Provider timeout |
+| `FunctionTool.from_defaults(func)` | `createTool({ execute })` |
+| Event-driven loops | Agent loop (implicit) |
+| `Workflow` + `Event` + `@step` | `Agent` + `Memory` + `Workflow` |
+| Python-first | TypeScript-first |
+
+## Mastra vs Microsoft Agent Framework: Key Mapping
+
+| MAF | Mastra |
+|-----|--------|
+| `Agent.run(prompt, session=session)` | `agent.generate(prompt)` |
+| `@tool` decorated function | `createTool({ inputSchema, execute })` |
+| `FunctionInvocationContext` | `context` parameter in `execute()` |
+| `agent.create_session()` | `Memory` + `SQLiteStorage` |
+| `AgentResult` | `FullOutput` |
+| `WorkflowBuilder` | `Workflow` class |
+| Harness (opinionated agent) | Optional agent composition |
+| Python, C#, Go | TypeScript-only |

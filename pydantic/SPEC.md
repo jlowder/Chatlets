@@ -1,10 +1,12 @@
-# Simple LLM Chat Interface
+# Chatlets — Pydantic AI Backend
+
+> **Note:** This is a **backend-only** implementation. The shared frontend (in `shared/`) provides the chat UI for all Chatlets. See [vercel-ai/SPEC.md](../vercel-ai/SPEC.md) for the full architecture.
+
+---
 
 ## Project Overview
 
-A minimal chat interface that connects to a OpenAI-compatible LLM with bash execution capabilities. The app allows users to send prompts and receive responses, with the LLM able to invoke a `bash` tool to execute shell commands.
-
-Built with Pydantic AI's type-safe approach — an `Agent` is defined with a model ID, dependency type, output type, and tools. Tools are registered via `@agent.tool` (with context) or `@agent.tool_plain` (pure functions). Pydantic AI uses **pydantic-graph** under the hood for execution flow, but the API is minimal: just `agent.run()`.
+A minimal chat backend that connects to an OpenAI-compatible LLM with bash execution capabilities using Pydantic AI's type-safe approach. An `Agent` is defined with a model ID, dependency type, output type, and tools. Tools are registered via `@agent.tool` (with context) or `@agent.tool_plain` (pure functions). Pydantic AI uses **pydantic-graph** under the hood for execution flow, but the API is minimal: just `agent.run()`.
 
 ---
 
@@ -12,35 +14,32 @@ Built with Pydantic AI's type-safe approach — an `Agent` is defined with a mod
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    User Browser                              │
+│              Shared Frontend (shared/)                     │
 │                                                             │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │              app/page.tsx (Client)                    │  │
-│  │  ┌─────────────┐       ┌──────────────┐              │  │
-│  │  │   Input     │──────▶│   Response   │              │  │
-│  │  │   Text +    │       │   Text Area  │              │  │
-│  │  │   Button    │       └──────────────┘              │  │
-│  │  └─────────────┘                                     │  │
-│  │        │                                             │  │
-│  │        │ fetch POST /api/chat                        │  │
-│  │        ▼                                             │  │
+│  │  Chat UI: input + response + tool output cards       │  │
 │  └───────────────────────────────────────────────────────┘  │
+│        │                                                    │
+│        │ fetch POST /api/chat                               │
+│        ▼                                                    │
+│  next.config.mjs (CHATLET_BACKEND=pydantic)                 │
+│  rewrites → pydantic backend on :5000                      │
 └─────────────────────────────────────────────────────────────┘
                         │
-                        │ HTTP POST
+                        │ HTTP POST /api/chat { prompt }
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              app/api/chat/route.ts                          │
+│              pydantic backend (port 5000)                  │
 │                                                             │
 │  ┌─────────────────┐    ┌───────────────────────────────┐   │
 │  │ Agent.run()     │───▶│ bash Tool (@agent.tool)      │   │
-│  │                 │    │  - RunContext                │   │
-│  │                 │    │  - execAsync(cmd, timeout)   │   │
-│  │  ┌────────────┐ │    │  - 30s timeout              │   │
-│  │  │   prompt   │ │    │  - returns stdout/stderr     │   │
-│  │  └────────────┘ │    └───────────────────────────────┘   │
-│  │        │        │    ▲                            │      │
-│  │        └─────────┼────────────────────────────┘         │
+│  │                 │    │  - RunContext[DepT]          │   │
+│  │  ┌────────────┐ │    │  - subprocess.run(timeout)   │   │
+│  │  │   prompt   │ │    │  - 30s timeout              │   │
+│  │  └────────────┘ │    │  - returns stdout/stderr     │   │
+│  │        │        │    └───────────────────────────────┘   │
+│  │        │           ▲                            │         │
+│  │        └───────────┼────────────────────────────┘         │
 │  │            │       │                                     │
 │  │            ▼       │                                     │
 │  │  ┌──────────────┐  │                                     │
@@ -65,55 +64,27 @@ Built with Pydantic AI's type-safe approach — an `Agent` is defined with a mod
 
 ---
 
-## Mermaid Architecture Diagram
+## API Endpoints
 
-```mermaid
-graph TB
-    subgraph Browser
-        Page["app/page.tsx (Client)"]
-        Input["Input + Send Button"]
-        Response["Response Text Area"]
-        ToolCards["Tool Output Cards"]
-    end
-    
-    subgraph Server
-        API["app/api/chat/route.ts"]
-        
-        subgraph Pydantic AI
-            Agent["Agent Definition"]
-            Model["Model"]
-            ToolLoop["Tool Execution Loop"]
-            Graph["pydantic-graph (under the hood)"]
-        end
-        
-        BashTool["@agent.tool bash_tool"]
-    end
-    
-    subgraph LocalLLM
-        LLM["OpenAI-compatible"]
-    end
-    
-    subgraph Shell
-        Cmd["execAsync"]
-    end
-    
-    Input --> Page
-    Page --> Response
-    Page --> ToolCards
-    Page --"POST /api/chat"--> API
-    API --> Agent
-    Agent --> Model
-    Model --> LLM
-    LLM --> Model
-    Model --"tool_calls"--> ToolLoop
-    ToolLoop --> BashTool
-    BashTool --"check allowed"--> AllowList["Allow List Check"]
-    AllowList --"permitted"--> Cmd
-    Cmd --"stdout/stderr"--> BashTool
-    ToolLoop --> Graph
-    Graph --> Model
-    Agent --> API
-```
+### `POST /api/chat`
+
+| Property | Value |
+|----------|-------|
+| **Content-Type** | `application/json` |
+| **Request Body** | `{ prompt: string }` |
+| **Success Response** | `{ text: string, toolOutputs: { stdout?: string, stderr?: string, error?: string }[] }` |
+| **Error Response** | `{ error: string }` |
+
+---
+
+## API Contract
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `prompt` | `string` | Yes | User's chat message |
+| `text` | `string` | Yes | LLM response text |
+| `toolOutputs` | `object[]` | No | Array of bash tool execution results |
+| `error` | `string` | No | Error message if request fails |
 
 ---
 
@@ -121,43 +92,22 @@ graph TB
 
 | Layer | Technology | Version |
 |-------|------------|---------|
-| **Framework** | Next.js | 16.2.10 (App Router) |
-| **UI** | React | 19.2.4 |
 | **Agent Framework** | Pydantic AI | 2025.x |
 | **Graph Engine** | pydantic-graph | (bundled) |
 | **Validation** | Pydantic | 2.x |
-| **Styling** | Tailwind CSS | v4 |
-| **Type Safety** | TypeScript | 5.x |
-| **Fonts** | Geist Sans/Mono | (via Tailwind v4) |
+| **Type Safety** | TypeScript | 5.x (for proxy/API layer) |
 
 ---
 
 ## Key Components
 
-### `app/page.tsx`
+### `app/api/chat/route.ts` (or `agent_service.py` equivalent)
 
-**Type**: Client Component (`'use client'`)  
-**Purpose**: Chat UI with input, response display, and tool output visualization
-
-```tsx
-useState hooks:
-  - prompt: Input field value
-  - response: LLM response text
-  - toolOutputs: Array of bash tool execution results
-  - loading: Button/input disabled state
-
-send():
-  - POST to /api/chat with { prompt }
-  - Update response and toolOutputs on success
-```
-
-### `app/api/chat/route.ts`
-
-**Type**: Server API Route (POST)  
+**Type**: API Route (POST)  
 **Purpose**: Orchestrate LLM inference via a Pydantic AI agent
 
-```tsx
-Key imports (Python):
+```python
+Key imports:
   - Agent, RunContext, UsageLimits from pydantic_ai
   - ChatOpenAIModel from pydantic_ai.providers.openai
 
@@ -169,23 +119,42 @@ Configuration:
   - tools: [@agent.tool decorated function]
   - agent: Agent with deps_type, system_prompt
   - usage_limits: UsageLimits(tool_call_limit=5)
-  - run(): agent.run(prompt, deps=deps) → RunResult
+  - run(): agent.run(prompt, deps=deps) → AgentRunResult
 ```
 
-### `app/globals.css`
+### Agent Definition
 
-**Type**: Global Styles  
-**Purpose**: Tailwind v4 setup with system theme detection
+**Type**: Generic Python class (`Agent[DepT, OutputT]`)  
+**Purpose**: Type-safe agent with dependency injection and structured output
 
-```css
-Tailwind v4 syntax:
-  @import "tailwindcss"
-  @theme inline { ... }
+```python
+from pydantic_ai import Agent, RunContext
 
-Features:
-  - System color scheme detection (light/dark)
-  - CSS custom properties for theming
-  - Geist font family configuration
+class ChatDeps:
+    """Dependencies for the chat agent."""
+    allow_list: set[str]
+    allow_all: bool
+
+agent = Agent[ChatDeps, str](
+    model,
+    deps_type=ChatDeps,
+    system_prompt="You are a helpful assistant that can execute bash commands.",
+)
+```
+
+### Bash Tool
+
+**Type**: Function decorated with `@agent.tool`  
+**Purpose**: Register an async function as an agent tool with dependency injection
+
+```python
+@agent.tool
+async def bash_tool(
+    ctx: RunContext[ChatDeps],
+    command: str,
+) -> str:
+    """Execute a bash command on the server."""
+    # ... implementation ...
 ```
 
 ---
@@ -210,7 +179,7 @@ model = ChatOpenAIModel(
 | **Provider Type** | OpenAI-compatible |
 | **Max Retries** | Provider default |
 
-Configuration data is persisted to a file called llm-config.json
+Configuration data is persisted to a file called `llm-config.json`.
 
 ---
 
@@ -236,7 +205,7 @@ class ChatDeps:
         self.allow_all = allow_all
 
 # Define the agent
-agent = Agent(
+agent = Agent[ChatDeps, str](
     model,
     deps_type=ChatDeps,
     system_prompt=(
@@ -333,12 +302,12 @@ json.dumps({
 ### Default Allow List
 
 By default, the allow list includes:
-- `ls` - List directory contents
-- `pwd` - Print working directory
+- `ls` — List directory contents
+- `pwd` — Print working directory
 
 ### User Editable
 
-Users can modify the allow list through the web app UI:
+Users can modify the allow list through the shared frontend UI:
 - **Add commands**: Enter a new command to add it to the list
 - **Remove commands**: Click the remove button next to any command
 
@@ -350,13 +319,176 @@ A toggle setting enables "Allow All" mode:
 
 ---
 
+## Agent Architecture
+
+### Full Type Safety via Generics
+
+Pydantic AI is parameterized with two generic types:
+
+```python
+agent = Agent[ChatDeps, str](
+    model,
+    deps_type=ChatDeps,
+)
+```
+
+| Generic Parameter | Purpose | Example |
+|-------------------|---------|---------|
+| `DepT` (deps_type) | Dependency injection type | `ChatDeps` with `allow_list`, `allow_all` |
+| `OutputT` (output_type) | Output validation type | `str` (default) or `PydanticModel` for structured output |
+
+### Dependency Injection via `deps_type`
+
+Dependencies are passed at runtime and accessed via `RunContext[DepT]`:
+
+```python
+class ChatDeps:
+    def __init__(self, allow_list: set[str] | None = None, allow_all: bool = False):
+        self.allow_list = allow_list or {"ls", "pwd"}
+        self.allow_all = allow_all
+
+deps = ChatDeps(allow_list={"ls", "pwd", "npm"}, allow_all=False)
+result = await agent.run(prompt, deps=deps)
+```
+
+Inside a tool, access via `ctx.deps`:
+
+```python
+@agent.tool
+async def bash_tool(ctx: RunContext[ChatDeps], command: str) -> str:
+    if command.split()[0] not in ctx.deps.allow_list and not ctx.deps.allow_all:
+        return json.dumps({"error": f"Command not allowed"})
+    # ...
+```
+
+### @agent.tool Decorator
+
+```python
+@agent.tool
+async def bash_tool(ctx: RunContext[ChatDeps], command: str) -> str:
+    """Execute a bash command on the server.
+    
+    Args:
+        command: The bash/shell command to execute
+    """
+    # Type hints auto-generate the JSON schema
+    pass
+
+# Pure function version (no context/dependencies)
+@agent.tool_plain
+def plain_tool(x: int) -> int:
+    return x * 2
+```
+
+### pydantic-graph Execution Flow
+
+Under the hood, each agent uses a typed finite state machine:
+
+```
+UserPromptNode → ModelRequestNode → CallToolsNode → ... → End
+```
+
+- **UserPromptNode** — receives the user's input
+- **ModelRequestNode** — sends messages to the LLM
+- **CallToolsNode** — validates and executes tool calls
+- **End** — terminates when no more tool calls or limit reached
+
+Access nodes directly via `agent.iter()`:
+
+```python
+async with agent.iter(prompt, deps=deps) as runner:
+    async for node in runner:
+        print(f"Node: {node.node_name}")
+```
+
+### UsageLimits
+
+```python
+result = await agent.run(
+    prompt,
+    deps=deps,
+    usage_limits=UsageLimits(tool_call_limit=5),
+)
+```
+
+| Setting | Description |
+|---------|-------------|
+| `tool_call_limit` | Maximum number of tool calls |
+| `output_tokens_limit` | Maximum output tokens |
+| `requests` | Maximum API requests |
+
+### endStrategy
+
+Control behavior when text and tool calls coexist in an LLM response:
+
+```python
+result = await agent.run(prompt, deps=deps, end_strategy='graceful')
+# or
+result = await agent.run(prompt, deps=deps, end_strategy='exhaustive')
+```
+
+### output_type = PydanticModel
+
+For structured output, set `output_type` to a Pydantic model:
+
+```python
+from pydantic import BaseModel
+
+class ResponseModel(BaseModel):
+    answer: str
+    confidence: float
+
+agent = Agent[ChatDeps, ResponseModel](
+    model,
+    deps_type=ChatDeps,
+    output_type=ResponseModel,
+)
+
+result = await agent.run(prompt, deps=deps)
+structured = result.output  # Type: ResponseModel
+```
+
+### ModelRetry
+
+Raise `ModelRetry` in a tool to request the LLM retry:
+
+```python
+from pydantic_ai import ModelRetry
+
+@agent.tool
+async def fragile_tool(ctx: RunContext[ChatDeps], item: str) -> str:
+    if not item:
+        raise ModelRetry("Item must not be empty")
+    # ...
+```
+
+### Capabilities / Bundles
+
+Reusable bundles of tools, hooks, instructions, and model settings:
+
+```python
+from pydantic_ai import Agent
+
+# Bundle reusable components
+capabilities = ...  # Tools, hooks, instructions bundled together
+
+agent = Agent(
+    model,
+    deps_type=ChatDeps,
+    system_prompt="...",
+    # capabilities applied here
+)
+```
+
+---
+
 ## Design Patterns
 
-### 1. Client-Server Separation
+### 1. Backend-Only API
 
-- **Client** (`page.tsx`): UI-only, no API credentials
-- **Server** (`api/chat/route.ts`): Holds API key, makes LLM calls
+- **API Route** (`api/chat/route.ts`): Holds API key, makes LLM calls
 - **Benefit**: API key never exposed to browser
+- The shared frontend communicates via a standardized `POST /api/chat` contract
 
 ### 2. Pydantic AI Type-Safe Agent Pattern
 
@@ -373,48 +505,34 @@ model = ChatOpenAIModel(
 
 # Step 2: Define the dependency type
 class ChatDeps:
-    """Dependencies for the chat agent."""
     def __init__(self, allow_list: set[str] | None = None, allow_all: bool = False):
         self.allow_list = allow_list or {"ls", "pwd"}
         self.allow_all = allow_all
 
 # Step 3: Create the agent with type parameters
-agent = Agent[ChatDeps, str](  # Agent[deps_type, output_type]
+agent = Agent[ChatDeps, str](
     model,
     deps_type=ChatDeps,
-    system_prompt=(
-        "You are a helpful assistant that can execute bash commands on the server. "
-        "Use the bash tool to run commands and return the results to the user."
-    ),
+    system_prompt="You are a helpful assistant that can execute bash commands.",
 )
 
 # Step 4: Register the tool
 @agent.tool
-async def bash_tool(
-    ctx: RunContext[ChatDeps],
-    command: str,
-) -> str:
-    """Execute a bash command on the server.
-    
-    Args:
-        command: The bash/shell command to execute
-    """
+async def bash_tool(ctx: RunContext[ChatDeps], command: str) -> str:
+    """Execute a bash command on the server."""
     # ... implementation ...
 
-# Step 5: Create dependencies
+# Step 5: Create dependencies and run
 deps = ChatDeps(allow_list={"ls", "pwd"}, allow_all=False)
-
-# Step 6: Run the agent
 result = await agent.run(
     prompt,
     deps=deps,
     usage_limits=UsageLimits(tool_call_limit=5),
 )
 
-# Step 7: Access results
-final_output = result.output           # Final text response (type: str)
+# Step 6: Access results
+final_output = result.output           # Type: str
 tool_calls = result.all_messages()     # Full message history
-# result.usage contains token usage stats
 ```
 
 **Key Pydantic AI concepts used**:
@@ -437,14 +555,12 @@ tool_calls = result.all_messages()     # Full message history
 - **Capabilities** — reusable bundles of tools, hooks, instructions, and model settings
 - **Model retry** — raise `ModelRetry` in a tool to request the model retry
 
-### 3. Tool Output Visualization
+### 3. Tool Output Structure
 
-```tsx
-result.all_messages():
-  ├─ stdout → Green-tinted card with dark terminal background
-  ├─ stderr → Red-tinted card for error streams
-  └─ error  → Inline error message (execution failed)
-```
+Tool results are extracted from `result.all_messages()`:
+- `stdout` — green-tinted output card with dark terminal background
+- `stderr` — red-tinted card for error streams
+- `error` — inline error message if execution failed
 
 ---
 
@@ -455,18 +571,11 @@ result.all_messages():
   "dependencies": {
     "pydantic-ai": "^2025.x",
     "pydantic": "^2.x",
-    "next": "16.2.10",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "next": "16.2.10 (for API routes only)"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.10",
-    "tailwindcss": "^4",
     "typescript": "^5"
   }
 }
@@ -474,76 +583,36 @@ result.all_messages():
 
 ---
 
-## Development Workflow
+## Running
 
 ```bash
-# Start development server
-bun dev
-
-# Build for production
-bun build
-
-# Run production server
-bun start
+cd pydantic
+pip install pydantic-ai pydantic
+npm install
+npm run dev    # starts backend on port 5000
 ```
 
-Access at `http://localhost:3000`
+The shared frontend proxies to this backend via `shared/next.config.mjs` (`CHATLET_BACKEND=pydantic`). After implementing, add your port and URL to `shared/config/backends.ts`.
 
 ---
 
 ## Data Flow Summary
 
-1. **User** types prompt and clicks Send
-2. **Client** sends `POST /api/chat` with `{ prompt }`
-3. **API Route** creates a Pydantic AI `Agent[ChatDeps, str]` with model, bash tool, and system prompt
-4. **API Route** creates `ChatDeps` instance with allow list configuration
-5. **Agent** calls `agent.run(prompt, deps=deps, usage_limits=UsageLimits(tool_call_limit=5))`
-6. **pydantic-graph** traverses: `UserPromptNode → ModelRequestNode → CallToolsNode → ... → End`
-7. **LLM** processes prompt, may request tool calls
-8. **Pydantic AI** validates arguments (via type hints), executes `bash_tool()` (30s timeout)
+1. **User** types prompt and clicks Send in the shared frontend
+2. **Frontend** sends `POST /api/chat` with `{ prompt }`
+3. **next.config.mjs** rewrites the request to `pydantic` backend on `:5000`
+4. **API Route** creates a Pydantic AI `Agent[ChatDeps, str]` with model, bash tool, and system prompt
+5. **API Route** creates `ChatDeps` instance with allow list configuration
+6. **Agent** calls `agent.run(prompt, deps=deps, usage_limits=UsageLimits(tool_call_limit=5))`
+7. **pydantic-graph** traverses: `UserPromptNode → ModelRequestNode → CallToolsNode → ... → End`
+8. **LLM** processes prompt, may request tool calls
+9. **Pydantic AI** validates arguments (via type hints), executes `bash_tool()` (30s timeout)
    - **Allow List Check** verifies the base command is permitted (via `ctx.deps.allow_list`)
-9. **Tool results** added to message history; graph loop continues
-10. **Agent** loops until LLM returns final response (no more tool calls, or `tool_call_limit` reached)
-11. **Pydantic** validates output against `output_type=str`
-12. **API Route** returns `{ text, toolOutputs[] }` extracted from `AgentRunResult`
-13. **Client** displays response text and tool output cards
-
----
-
-## UI Behavior
-
-### Autoscroll Behavior
-- Uses `useLayoutEffect` + `setTimeout(..., 0)` pattern to autoscroll chat to bottom
-- Triggers on changes to `messages` array or `loading` state
-- Scrolls by setting `container.scrollTop = scrollHeight`
-- This is a hard jump (no smooth scrolling animation)
-- Unconditionally scrolls user back to bottom even if they scrolled up mid-conversation
-- No scroll preservation or intersection observer for smart scrolling
-
-### Chat Container Styling
-- `flex-1 min-h-0 overflow-y-auto px-8 py-6 pb-20 space-y-6`
-- `overflow-y-auto` enables scrolling
-- `pb-20` provides bottom padding so content isn't hidden behind the sticky input bar
-
-### Input Bar Behavior
-- `sticky bottom-0` keeps input bar fixed at bottom of chat card
-- Has `data-input-bar` attribute
-
-### Typing Indicator Animation
-- Three dots with staggered `animate-bounce` (Tailwind CSS)
-- Animation delays: 0ms, 150ms, 300ms
-
-### Other UI Effects
-- Dark mode toggle: `transition-colors` on button
-- Input field: `transition-shadow` on focus
-- Send button: `transition-all` + `active:scale-[0.98]` press feedback
-- Send button disabled state: `disabled:opacity-40`
-
-### Notes on Scrolling
-- No `smooth` scrolling — hard jump via direct scrollTop assignment
-- No scroll preservation — user is always scrolled to bottom on new messages
-- No `scrollIntoView` with `behavior: 'smooth'`
-- No intersection observer or smart scroll detection
+10. **Tool results** added to message history; graph loop continues
+11. **Agent** loops until LLM returns final response (no more tool calls, or `tool_call_limit` reached)
+12. **Pydantic** validates output against `output_type=str`
+13. **API Route** returns `{ text, toolOutputs[] }` extracted from `AgentRunResult`
+14. **Frontend** displays response text and tool output cards
 
 ---
 

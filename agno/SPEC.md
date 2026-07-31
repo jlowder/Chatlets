@@ -17,10 +17,19 @@ The shared frontend proxies to this backend and renders all UI.
 cd agno
 pip install -r requirements.txt    # Python deps (first time)
 npm install                         # Node deps (first time)
-npm run dev:all                     # starts Flask + proxy together
+npm run dev:all                     # starts Flask agent + Next.js proxy together
 ```
 
-The shared frontend proxies `/api/chat` to this backend's port 3001 via `shared/next.config.mjs` (`CHATLET_BACKEND=agno`).
+This backend has **two internal services** that must both run:
+
+| Service | Command | Port | What it does |
+|---------|---------|------|-------------|
+| Flask Agent | `npm run agent` | 8081 | Runs the Agno AI agent with bash tool execution |
+| Next.js Proxy | `npm run dev` | 3001 | Proxies `/api/chat` to the Flask agent |
+
+Running `npm run dev` alone will **not** work — you must use `npm run dev:all` to start both services.
+
+The shared frontend proxies `/api/chat` to port 3001 (`CHATLET_BACKEND=agno`).
 
 ---
 

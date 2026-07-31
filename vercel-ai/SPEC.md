@@ -13,8 +13,10 @@ The shared frontend proxies requests to this backend and renders all UI.
 ```bash
 cd vercel-ai
 bun install   # first time only
-bun dev       # starts on port 4000
+bun dev       # starts the backend on port 4000
 ```
+
+This is a **single-service** backend — running `bun dev` starts the entire backend on port 4000. No additional services needed.
 
 The shared frontend proxies `/api/chat` to `http://localhost:4000/api/chat` (configured in `shared/next.config.mjs`).
 

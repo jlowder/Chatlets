@@ -1,10 +1,12 @@
-# Simple LLM Chat Interface
+# Chatlets — CrewAI Backend
+
+> **Note:** This is a **backend-only** implementation. The shared frontend (in `shared/`) provides the chat UI for all Chatlets. See [vercel-ai/SPEC.md](../vercel-ai/SPEC.md) for the full architecture.
+
+---
 
 ## Project Overview
 
-A minimal chat interface that connects to a OpenAI-compatible LLM with bash execution capabilities. The app allows users to send prompts and receive responses, with the LLM able to invoke a `bash` tool to execute shell commands.
-
-Built with CrewAI's multi-agent orchestration — a single `BashAgent` is defined with a role, goal, and backstory, equipped with a `bash` tool and governed by an allow list. The agent is assembled into a `Crew` and tasked to execute user requests.
+A minimal chat backend that connects to an OpenAI-compatible LLM with bash execution capabilities using CrewAI's multi-agent orchestration. A single `BashAgent` is defined with a role, goal, and backstory, equipped with a `bash` tool and governed by an allow list. The agent is assembled into a `Crew` and tasked to execute user requests.
 
 ---
 
@@ -12,29 +14,26 @@ Built with CrewAI's multi-agent orchestration — a single `BashAgent` is define
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    User Browser                              │
+│              Shared Frontend (shared/)                     │
 │                                                             │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │              app/page.tsx (Client)                    │  │
-│  │  ┌─────────────┐       ┌──────────────┐              │  │
-│  │  │   Input     │──────▶│   Response   │              │  │
-│  │  │   Text +    │       │   Text Area  │              │  │
-│  │  │   Button    │       └──────────────┘              │  │
-│  │  └─────────────┘                                     │  │
-│  │        │                                             │  │
-│  │        │ fetch POST /api/chat                        │  │
-│  │        ▼                                             │  │
+│  │  Chat UI: input + response + tool output cards       │  │
 │  └───────────────────────────────────────────────────────┘  │
+│        │                                                    │
+│        │ fetch POST /api/chat                               │
+│        ▼                                                    │
+│  next.config.mjs (CHATLET_BACKEND=crewai)                   │
+│  rewrites → crewai backend on :5000                        │
 └─────────────────────────────────────────────────────────────┘
                         │
-                        │ HTTP POST
+                        │ HTTP POST /api/chat { prompt }
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              app/api/chat/route.ts                          │
+│              crewai backend (port 5000)                    │
 │                                                             │
 │  ┌─────────────────┐    ┌───────────────────────────────┐   │
 │  │ CrewAI Crew     │───▶│ bash Tool                   │   │
-│  │ .keras()        │    │  - zod input schema          │   │
+│  │ .kickoff()      │    │  - zod input schema          │   │
 │  │                 │    │  - execAsync(cmd, timeout)   │   │
 │  │  ┌────────────┐ │    │  - 30s timeout              │   │
 │  │  │   prompt   │ │    │  - returns stdout/stderr     │   │
@@ -53,7 +52,8 @@ Built with CrewAI's multi-agent orchestration — a single `BashAgent` is define
 └────────┼────────────────────────────────────────────────┘      │
          │                                                       │
          │ OpenAI-compatible API call                            │
-         │ max_l Tokens: 5 (max iterations)                      │
+         │ max_tokens: 4096 (context window)                     │
+         │ max_iter: 5 (max tool-call cycles)                    │
          │ Allow List Check                                      │
          │                                                       │
          ▼
@@ -64,53 +64,27 @@ Built with CrewAI's multi-agent orchestration — a single `BashAgent` is define
 
 ---
 
-## Mermaid Architecture Diagram
+## API Endpoints
 
-```mermaid
-graph TB
-    subgraph Browser
-        Page["app/page.tsx (Client)"]
-        Input["Input + Send Button"]
-        Response["Response Text Area"]
-        ToolCards["Tool Output Cards"]
-    end
-    
-    subgraph Server
-        API["app/api/chat/route.ts"]
-        
-        subgraph CrewAI
-            Crew["Crew Definition"]
-            Agent["BashAgent"]
-            Task["ExecuteTask"]
-        end
-        
-        BashTool["bash Tool"]
-    end
-    
-    subgraph LocalLLM
-        LLM["OpenAI-compatible"]
-    end
-    
-    subgraph Shell
-        Cmd["execAsync"]
-    end
-    
-    Input --> Page
-    Page --> Response
-    Page --> ToolCards
-    Page --"POST /api/chat"--> API
-    API --> Crew
-    Crew --> Agent
-    Crew --> Task
-    Agent --> LLM
-    LLM --> Agent
-    Agent --"tool call"--> BashTool
-    BashTool --"check allowed"--> AllowList["Allow List Check"]
-    AllowList --"permitted"--> Cmd
-    Cmd --"stdout/stderr"--> BashTool
-    Agent --> Task
-    Task --> API
-```
+### `POST /api/chat`
+
+| Property | Value |
+|----------|-------|
+| **Content-Type** | `application/json` |
+| **Request Body** | `{ prompt: string }` |
+| **Success Response** | `{ text: string, toolOutputs: { stdout?: string, stderr?: string, error?: string }[] }` |
+| **Error Response** | `{ error: string }` |
+
+---
+
+## API Contract
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `prompt` | `string` | Yes | User's chat message |
+| `text` | `string` | Yes | LLM response text |
+| `toolOutputs` | `object[]` | No | Array of bash tool execution results |
+| `error` | `string` | No | Error message if request fails |
 
 ---
 
@@ -118,41 +92,20 @@ graph TB
 
 | Layer | Technology | Version |
 |-------|------------|---------|
-| **Framework** | Next.js | 16.2.10 (App Router) |
-| **UI** | React | 19.2.4 |
 | **Agent Framework** | CrewAI | 2.x |
 | **Validation** | Zod | 3.25.0 |
-| **Styling** | Tailwind CSS | v4 |
 | **Type Safety** | TypeScript | 5.x |
-| **Fonts** | Geist Sans/Mono | (via Tailwind v4) |
 
 ---
 
 ## Key Components
 
-### `app/page.tsx`
+### `app/api/chat/route.ts` (or `agent_service.py` equivalent)
 
-**Type**: Client Component (`'use client'`)  
-**Purpose**: Chat UI with input, response display, and tool output visualization
-
-```tsx
-useState hooks:
-  - prompt: Input field value
-  - response: LLM response text
-  - toolOutputs: Array of bash tool execution results
-  - loading: Button/input disabled state
-
-send():
-  - POST to /api/chat with { prompt }
-  - Update response and toolOutputs on success
-```
-
-### `app/api/chat/route.ts`
-
-**Type**: Server API Route (POST)  
+**Type**: API Route (POST)  
 **Purpose**: Orchestrate LLM inference via a CrewAI agent crew
 
-```tsx
+```ts
 Key imports:
   - { Agent } from "crewai"
   - { Task } from "crewai"
@@ -171,20 +124,27 @@ Configuration:
   - maxIter: 5 (via process config)
 ```
 
-### `app/globals.css`
+### Bash Tool
 
-**Type**: Global Styles  
-**Purpose**: Tailwind v4 setup with system theme detection
+**Type**: CrewAI Tool (`extends Tool`)  
+**Purpose**: Safely execute shell commands with allow-list enforcement
 
-```css
-Tailwind v4 syntax:
-  @import "tailwindcss"
-  @theme inline { ... }
+```ts
+class BashTool extends Tool {
+  name = "bash";
+  description = `Execute a bash command on the server. You MUST provide a "command"
+  parameter with the exact shell command to run. This is the ONLY way to run
+  commands. For example: command="pwd", command="ls -la", command="npm run build".`;
 
-Features:
-  - System color scheme detection (light/dark)
-  - CSS custom properties for theming
-  - Geist font family configuration
+  schema = z.object({
+    command: z.string().describe('The bash/shell command to execute'),
+  });
+
+  async _run(input: z.infer<typeof this.schema>): Promise<string> {
+    const { command } = input;
+    // ... execute and return result
+  }
+}
 ```
 
 ---
@@ -208,7 +168,7 @@ const llm = {
 | **Provider Type** | OpenAI-compatible (via CrewAI's native config) |
 | **Max Tokens** | `4096` (context window limit) |
 
-Configuration data is persisted to a file called llm-config.json
+Configuration data is persisted to a file called `llm-config.json`.
 
 ---
 
@@ -222,14 +182,14 @@ import { Tool } from "crewai/tools";
 
 class BashTool extends Tool {
   name = "bash";
-  description = `Execute a bash command on the server. You MUST provide a "command" 
-  parameter with the exact shell command to run. This is the ONLY way to run 
+  description = `Execute a bash command on the server. You MUST provide a "command"
+  parameter with the exact shell command to run. This is the ONLY way to run
   commands. For example: command="pwd", command="ls -la", command="npm run build".`;
-  
+
   schema = z.object({
     command: z.string().describe('The bash/shell command to execute'),
   });
-  
+
   async _run(input: z.infer<typeof this.schema>): Promise<string> {
     const { command } = input;
     // ... execute and return result
@@ -276,12 +236,12 @@ JSON.stringify({
 ### Default Allow List
 
 By default, the allow list includes:
-- `ls` - List directory contents
-- `pwd` - Print working directory
+- `ls` — List directory contents
+- `pwd` — Print working directory
 
 ### User Editable
 
-Users can modify the allow list through the web app UI:
+Users can modify the allow list through the shared frontend UI:
 - **Add commands**: Enter a new command to add it to the list
 - **Remove commands**: Click the remove button next to any command
 
@@ -295,21 +255,21 @@ A toggle setting enables "Allow All" mode:
 
 ## Design Patterns
 
-### 1. Client-Server Separation
+### 1. Backend-Only API
 
-- **Client** (`page.tsx`): UI-only, no API credentials
-- **Server** (`api/chat/route.ts`): Holds API key, makes LLM calls
+- **API Route** (`api/chat/route.ts`): Holds API key, makes LLM calls
 - **Benefit**: API key never exposed to browser
+- The shared frontend communicates via a standardized `POST /api/chat` contract
 
 ### 2. CrewAI Agent Pattern
 
-```tsx
+```ts
 // Step 1: Define the agent with role, goal, and backstory
 const bashAgent = new Agent({
   role: 'Command Executor',
   goal: 'Execute bash commands accurately and return results to the user',
-  backstory: `You are a helpful assistant that can execute bash commands on a server. 
-  You are given commands to run and you execute them safely using an allow list. 
+  backstory: `You are a helpful assistant that can execute bash commands on a server.
+  You are given commands to run and you execute them safely using an allow list.
   You always return the command output clearly.`,
   llm: modelConfig,
   tools: [new BashTool()],
@@ -319,7 +279,7 @@ const bashAgent = new Agent({
 
 // Step 2: Define the task that describes the user's request
 const executeTask = new Task({
-  description: `Execute the following user request: ${prompt}. 
+  description: `Execute the following user request: ${prompt}.
   Use the bash tool to run any commands needed and return the complete result.`,
   expectedOutput: 'A clear response containing the command outputs and explanation',
   agent: bashAgent,
@@ -349,15 +309,6 @@ const result = await crew.kickoff();
 - `maxIter` — limits the number of tool call/response cycles per task
 - Tool results are automatically passed back to the agent for next iteration
 
-### 3. Tool Output Visualization
-
-```tsx
-result.raw.split('\n'):
-  ├─ stdout → Green-tinted card with dark terminal background
-  ├─ stderr → Red-tinted card for error streams
-  └─ error  → Inline error message (execution failed)
-```
-
 ---
 
 ## Key Dependencies
@@ -367,18 +318,12 @@ result.raw.split('\n'):
   "dependencies": {
     "crewai": "^2.x",
     "zod": "^3.25.0",
-    "next": "16.2.10",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "next": "16.2.10 (for API routes only)"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
-    "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.10",
-    "tailwindcss": "^4",
     "typescript": "^5"
   }
 }
@@ -386,75 +331,35 @@ result.raw.split('\n'):
 
 ---
 
-## Development Workflow
+## Running
 
 ```bash
-# Start development server
-bun dev
-
-# Build for production
-bun build
-
-# Run production server
-bun start
+cd crewai
+pip install crewai
+npm install
+npm run dev    # starts backend on port 5000
 ```
 
-Access at `http://localhost:3000`
+The shared frontend proxies to this backend via `shared/next.config.mjs` (`CHATLET_BACKEND=crewai`). After implementing, add your port and URL to `shared/config/backends.ts`.
 
 ---
 
 ## Data Flow Summary
 
-1. **User** types prompt and clicks Send
-2. **Client** sends `POST /api/chat` with `{ prompt }`
-3. **API Route** creates a CrewAI `Agent` with role, goal, backstory, and bash tool
-4. **API Route** creates a `Task` describing the user prompt
-5. **API Route** assembles a `Crew` with the agent and task
-6. **Crew** executes via `kickoff()` — the agent processes the prompt
-7. **Agent** may call bash tool (up to `maxIter: 5` times)
-8. **Bash Tool** executes command via `execAsync()` (30s timeout)
+1. **User** types prompt and clicks Send in the shared frontend
+2. **Frontend** sends `POST /api/chat` with `{ prompt }`
+3. **next.config.mjs** rewrites the request to `crewai` backend on `:5000`
+4. **API Route** creates a CrewAI `Agent` with role, goal, backstory, and bash tool
+5. **API Route** creates a `Task` describing the user prompt
+6. **API Route** assembles a `Crew` with the agent and task
+7. **Crew** executes via `kickoff()` — the agent processes the prompt
+8. **Agent** may call bash tool (up to `maxIter: 5` times)
+9. **Bash Tool** executes command via `execAsync()` (30s timeout)
    - **Allow List Check** verifies the base command is permitted (or "Allow All" is enabled)
-9. **Agent** collects tool results and iterates until final answer
-10. **Crew** returns result via `kickoff()`
-11. **API Route** returns `{ text, toolOutputs[] }` extracted from the crew result
-12. **Client** displays response text and tool output cards
-
----
-
-## UI Behavior
-
-### Autoscroll Behavior
-- Uses `useLayoutEffect` + `setTimeout(..., 0)` pattern to autoscroll chat to bottom
-- Triggers on changes to `messages` array or `loading` state
-- Scrolls by setting `container.scrollTop = scrollHeight`
-- This is a hard jump (no smooth scrolling animation)
-- Unconditionally scrolls user back to bottom even if they scrolled up mid-conversation
-- No scroll preservation or intersection observer for smart scrolling
-
-### Chat Container Styling
-- `flex-1 min-h-0 overflow-y-auto px-8 py-6 pb-20 space-y-6`
-- `overflow-y-auto` enables scrolling
-- `pb-20` provides bottom padding so content isn't hidden behind the sticky input bar
-
-### Input Bar Behavior
-- `sticky bottom-0` keeps input bar fixed at bottom of chat card
-- Has `data-input-bar` attribute
-
-### Typing Indicator Animation
-- Three dots with staggered `animate-bounce` (Tailwind CSS)
-- Animation delays: 0ms, 150ms, 300ms
-
-### Other UI Effects
-- Dark mode toggle: `transition-colors` on button
-- Input field: `transition-shadow` on focus
-- Send button: `transition-all` + `active:scale-[0.98]` press feedback
-- Send button disabled state: `disabled:opacity-40`
-
-### Notes on Scrolling
-- No `smooth` scrolling — hard jump via direct scrollTop assignment
-- No scroll preservation — user is always scrolled to bottom on new messages
-- No `scrollIntoView` with `behavior: 'smooth'`
-- No intersection observer or smart scroll detection
+10. **Agent** collects tool results and iterates until final answer
+11. **Crew** returns result via `kickoff()`
+12. **API Route** returns `{ text, toolOutputs[] }` extracted from the crew result
+13. **Frontend** displays response text and tool output cards
 
 ---
 
