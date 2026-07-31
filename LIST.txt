@@ -1,10 +1,10 @@
-agno
-crewai
-langchain
-langgraph
-liw
-maf
-mastra
-pydantic
-smolagents
-vercel-ai
+[ ] agno
+[ ] crewai
+[ ] langchain
+[ ] langgraph
+[ ] liw
+[ ] maf
+[ ] mastra
+[ ] pydantic
+[ ] smolagents
+[x] vercel-ai
