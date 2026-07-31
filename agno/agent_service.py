@@ -107,8 +107,8 @@ def create_agent():
     - If you don't know the answer, say so. Do not guess.
     - If the user asks something that can be answered without a command, answer it directly.""",
         tool_call_limit=5,
-        add_session_state_to_context=False,
-        add_history_to_context=False,
+        add_session_state_to_context=True,
+        add_history_to_context=True,
         stream=False,
         debug_mode=False,
     )
@@ -126,20 +126,39 @@ def health():
 def chat():
     """Process a chat message through the Agno agent.
 
-    Expected JSON body: {"prompt": "user message"}
+    Expected JSON body: {"messages": [{"role": "user"|"assistant", "content": "..."}]}
     Returns: {"text": "...", "toolOutputs": [...]}
     """
     try:
         data = request.get_json()
-        if not data or "prompt" not in data:
-            return jsonify({"error": "Missing 'prompt' in request body"}), 400
+        if not data:
+            return jsonify({"error": "Missing request body"}), 400
 
-        prompt = data["prompt"]
-        if not prompt.strip():
-            return jsonify({"error": "Prompt cannot be empty"}), 400
+        # Support both new messages format and legacy prompt field
+        messages = data.get("messages", [])
+        if not messages:
+            # Legacy: fall back to single prompt field
+            prompt = data.get("prompt", "")
+            if not prompt.strip():
+                return jsonify({"error": "Prompt cannot be empty"}), 400
+            messages = [{"role": "user", "content": prompt}]
+        else:
+            # Validate at least one message exists
+            last = messages[-1]["content"] if messages else ""
+            if not last.strip():
+                return jsonify({"error": "Prompt cannot be empty"}), 400
+
+        # Build full conversation from all messages
+        conversation_parts = []
+        for m in messages:
+            role_label = "User" if m["role"] == "user" else "Assistant"
+            conversation_parts.append(f"{role_label}: {m['content']}")
+        full_conversation = "\n".join(conversation_parts)
 
         agent = create_agent()
-        result = agent.run(input=prompt)
+
+        # Pass full conversation as input so the model sees prior context
+        result = agent.run(input=full_conversation)
 
         # Debug: show the full message history sent to LLM
         print("=== FULL LLM CONTEXT ===", flush=True)

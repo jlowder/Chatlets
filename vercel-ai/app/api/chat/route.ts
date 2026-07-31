@@ -50,10 +50,23 @@ const bashTool = tool({
 
 export async function POST(request: Request) {
   try {
-    const { prompt } = await request.json();
+    const body = await request.json();
+    const messages = body.messages || [{ role: 'user' as const, content: body.prompt }];
+    const prompt = messages[messages.length - 1]?.content;
     if (!prompt) {
       return NextResponse.json({ error: 'Missing prompt' }, { status: 400 });
     }
+
+    // Build conversation history from all messages except the last
+    const history = messages
+      .slice(0, -1)
+      .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+      .join('\n');
+
+    // The last message is the new prompt
+    const conversation = history
+      ? `${history}\n\nUser: ${prompt}`
+      : prompt;
 
     const cfg = await loadConfig();
     const provider = createOpenAICompatible({
@@ -63,11 +76,11 @@ export async function POST(request: Request) {
     });
     const model = provider(cfg.model, { maxRetries: 0 });
 
-    const instructions = 'You are a helpful assistant. Use the bash tool when necessary to execute shell commands.';
+    const instructions = `You are a helpful assistant. Answer questions directly from your knowledge whenever possible. Only use the bash tool when the user explicitly requests a shell command (e.g., "run ls", "execute the script", "check disk space"). Do NOT use bash for: general knowledge questions, math, definitions, explanations, or factual queries. The user does not want command-line access unless they specifically ask for it.`;
 
     const result = await generateText({
       model,
-      prompt,
+      prompt: conversation,
       instructions,
       tools: { bash: bashTool },
       maxSteps: 5,

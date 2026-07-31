@@ -31,14 +31,16 @@ export default function ChatPage({ frameworkName }: { frameworkName: string }) {
     const trimmed = input.trim();
     if (!trimmed || loading) return;
     setInput("");
-    setMessages(prev => [...prev, { role: "user", content: trimmed }]);
+    const userMessage: Message = { role: "user", content: trimmed };
+    const prevMessages = [...messages, userMessage];
+    setMessages(prevMessages);
     setLoading(true);
 
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: trimmed } satisfies ChatRequest),
+        body: JSON.stringify({ messages: prevMessages } satisfies ChatRequest),
       });
       const data: ChatResponse = await res.json();
 

@@ -11,5 +11,5 @@ export interface ChatResponse {
 }
 
 export interface ChatRequest {
-  prompt: string;
+  messages: Array<{ role: "user" | "assistant"; content: string }>;
 }

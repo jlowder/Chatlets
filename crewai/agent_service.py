@@ -152,26 +152,52 @@ def health():
 def chat():
     """Process a chat message through the CrewAI agent.
 
-    Expected JSON body: {"prompt": "user message"}
+    Expected JSON body: {"messages": [{"role": "user"|"assistant", "content": "..."}]}
     Returns: {"text": "...", "toolOutputs": [...]}
     """
     try:
         data = request.get_json()
-        if not data or "prompt" not in data:
-            return jsonify({"error": "Missing 'prompt' in request body"}), 400
+        if not data:
+            return jsonify({"error": "Missing request body"}), 400
 
-        prompt = data["prompt"]
-        if not prompt.strip():
-            return jsonify({"error": "Prompt cannot be empty"}), 400
+        # Support both new messages format and legacy prompt field
+        messages = data.get("messages", [])
+        if not messages:
+            # Legacy: fall back to single prompt field
+            prompt = data.get("prompt", "")
+            if not prompt.strip():
+                return jsonify({"error": "Prompt cannot be empty"}), 400
+            messages = [{"role": "user", "content": prompt}]
+        else:
+            # Validate at least one message exists
+            last = messages[-1]["content"] if messages else ""
+            if not last.strip():
+                return jsonify({"error": "Prompt cannot be empty"}), 400
+
+        # Build conversation context from prior messages
+        context_parts = []
+        for m in messages[:-1]:  # All messages except the last (current) one
+            role_label = "user" if m["role"] == "user" else "assistant"
+            context_parts.append(f"{role_label}: {m['content']}")
+        context = "\n".join(context_parts) if context_parts else None
+
+        # The last message is the current prompt
+        last_prompt = messages[-1]["content"]
+
+        # Build task description with conversation context
+        if context:
+            task_description = f"Previous conversation:\n{context}\n\nCurrent question: {last_prompt}"
+        else:
+            task_description = last_prompt
 
         agent = create_agent()
-        
+
         # Reset captured outputs before this run
         _captured_tool_outputs.clear()
-        
-        # Create a task from the user prompt
+
+        # Create a task from the prompt (with context if available)
         task = Task(
-            description=prompt,
+            description=task_description,
             expected_output="A response to the user's request, with tool results if needed.",
             agent=agent,
         )
