@@ -53,19 +53,7 @@ ALLOW_ALL = False
 
 
 def bash_tool(command: str, run_context=None) -> str:
-    """Execute a bash command on the server.
-
-    You MUST provide a "command" parameter with the exact shell command to run.
-    This is the ONLY way to run commands. For example: command="pwd",
-    command="ls -la", command="npm run build".
-
-    Args:
-        command: The bash/shell command to execute
-        run_context: Injected by Agno at runtime (not sent to model)
-
-    Returns:
-        JSON string with stdout, stderr, and optional error
-    """
+    """Execute a bash command. ONLY use when the user explicitly asks to run a shell command, check system info, or list files."""
     # Allow list check
     global ALLOW_LIST, ALLOW_ALL
     cfg = load_config()
@@ -110,7 +98,14 @@ def create_agent():
         name="chat-agent",
         model=model,
         tools=[bash_tool],
-        instructions="You are a helpful assistant. Use the bash tool when necessary to execute shell commands.",
+        instructions="""You are a helpful assistant. You have access to a bash tool that can execute shell commands.
+
+    IMPORTANT RULES:
+    - Answer questions directly from your knowledge whenever possible
+    - ONLY use bash tool when: the user explicitly asks to run a command, check system status, list files, read files, or perform a computation
+    - NEVER use bash for: general knowledge questions (area, population, history, facts), math, definitions, explanations
+    - If you don't know the answer, say so. Do not guess.
+    - If the user asks something that can be answered without a command, answer it directly.""",
         tool_call_limit=5,
         add_session_state_to_context=False,
         add_history_to_context=False,
