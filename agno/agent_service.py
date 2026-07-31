@@ -1,0 +1,219 @@
+"""
+Agno Agent Service - Flask HTTP server that runs an Agno agent with bash tool execution.
+This service is called by the Next.js API route.
+
+Usage:
+    python agent_service.py
+
+Runs on http://localhost:8081
+"""
+
+import json
+import subprocess
+import os
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+
+# Try importing agno, fall back gracefully
+try:
+    from agno.agent import Agent
+    from agno.models.openai.like import OpenAILike
+    AGNO_AVAILABLE = True
+except ImportError as e:
+    AGNO_AVAILABLE = False
+    print(f"WARNING: agno not installed or import failed: {e}")
+    print("Install with: pip install -r requirements.txt")
+
+app = Flask(__name__)
+CORS(app)
+
+# --- Configuration ---
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+
+
+def load_config():
+    """Load LLM and tool configuration from config.json."""
+    try:
+        with open(CONFIG_PATH, "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {
+            "provider": "YOUR_PROVIDER",
+            "baseURL": "http://localhost:8080/v1",
+            "apiKey": "example",
+            "model": "openai-compatible:modelName",
+            "allowList": ["ls", "pwd"],
+            "allowAll": False,
+        }
+
+
+# --- Bash Tool ---
+ALLOW_LIST = ["ls", "pwd"]
+ALLOW_ALL = False
+
+
+def bash_tool(command: str, run_context=None) -> str:
+    """Execute a bash command on the server.
+
+    You MUST provide a "command" parameter with the exact shell command to run.
+    This is the ONLY way to run commands. For example: command="pwd",
+    command="ls -la", command="npm run build".
+
+    Args:
+        command: The bash/shell command to execute
+        run_context: Injected by Agno at runtime (not sent to model)
+
+    Returns:
+        JSON string with stdout, stderr, and optional error
+    """
+    # Allow list check
+    global ALLOW_LIST, ALLOW_ALL
+    cfg = load_config()
+    ALLOW_LIST = cfg.get("allowList", ["ls", "pwd"])
+    ALLOW_ALL = cfg.get("allowAll", False)
+
+    base_cmd = command.strip().split()[0] if command.strip() else ""
+    if base_cmd not in ALLOW_LIST and not ALLOW_ALL:
+        return json.dumps(
+            {"error": f"Command '{base_cmd}' not allowed", "stdout": "", "stderr": ""}
+        )
+
+    try:
+        result = subprocess.run(
+            command, shell=True, capture_output=True, text=True, timeout=30
+        )
+        output = {"stdout": result.stdout.strip(), "stderr": result.stderr.strip()}
+        if result.returncode != 0:
+            output["error"] = f"Command exited with code {result.returncode}"
+        return json.dumps(output)
+    except subprocess.TimeoutExpired:
+        return json.dumps({"error": "Command timed out (30s)", "stdout": "", "stderr": ""})
+    except Exception as e:
+        return json.dumps({"error": str(e), "stdout": "", "stderr": ""})
+
+
+# --- Agent Factory ---
+def create_agent():
+    """Create and return an Agno Agent configured with the bash tool."""
+    cfg = load_config()
+
+    if not AGNO_AVAILABLE:
+        raise RuntimeError("agno package is not installed. Run: pip install -r requirements.txt")
+
+    model = OpenAILike(
+        id=cfg.get("model", "your-model-id"),
+        api_key=cfg.get("apiKey", "example"),
+        base_url=cfg.get("baseURL", "http://localhost:8080/v1"),
+    )
+
+    agent = Agent(
+        name="chat-agent",
+        model=model,
+        tools=[bash_tool],
+        instructions="You are a helpful assistant. Use the bash tool when necessary to execute shell commands.",
+        tool_call_limit=5,
+        add_session_state_to_context=False,
+        add_history_to_context=False,
+        stream=False,
+        debug_mode=False,
+    )
+    return agent
+
+
+# --- API Routes ---
+@app.route("/health", methods=["GET"])
+def health():
+    """Health check endpoint."""
+    return jsonify({"status": "ok", "agno": AGNO_AVAILABLE})
+
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    """Process a chat message through the Agno agent.
+
+    Expected JSON body: {"prompt": "user message"}
+    Returns: {"text": "...", "toolOutputs": [...]}
+    """
+    try:
+        data = request.get_json()
+        if not data or "prompt" not in data:
+            return jsonify({"error": "Missing 'prompt' in request body"}), 400
+
+        prompt = data["prompt"]
+        if not prompt.strip():
+            return jsonify({"error": "Prompt cannot be empty"}), 400
+
+        agent = create_agent()
+        result = agent.run(input=prompt)
+
+        # Debug: show the full message history sent to LLM
+        print("=== FULL LLM CONTEXT ===", flush=True)
+        if hasattr(result, "messages") and result.messages:
+            for i, msg in enumerate(result.messages):
+                role = getattr(msg, "role", "unknown")
+                content = getattr(msg, "content", "")
+                if isinstance(content, list):
+                    content = [{"type": type(c).__name__, "text": str(getattr(c, "text", ""))[:200]} for c in content]
+                print(f"[{i}] role={role} content={repr(content)}", flush=True)
+        print("=== END CONTEXT ===", flush=True)
+
+        # Extract final text response from assistant messages
+        text = ""
+        if hasattr(result, "content") and result.content:
+            text = str(result.content)
+        elif hasattr(result, "messages") and result.messages:
+            for msg in reversed(result.messages):
+                if getattr(msg, "role", None) == "assistant":
+                    content = msg.content
+                    if isinstance(content, list):
+                        text = " ".join(
+                            c.text for c in content if hasattr(c, "text")
+                        )
+                    elif isinstance(content, str):
+                        text = content
+                    break
+
+        # Extract tool call results from messages with role='tool'
+        tool_outputs = []
+        if hasattr(result, "messages") and result.messages:
+            for msg in result.messages:
+                if getattr(msg, "role", None) == "tool":
+                    content = msg.content
+                    if isinstance(content, str):
+                        try:
+                            tool_outputs.append(json.loads(content))
+                        except (json.JSONDecodeError, TypeError):
+                            tool_outputs.append({"stdout": content, "stderr": ""})
+                    elif isinstance(content, dict):
+                        tool_outputs.append(content)
+                    elif isinstance(content, list):
+                        for item in content:
+                            if isinstance(item, str):
+                                try:
+                                    tool_outputs.append(json.loads(item))
+                                except (json.JSONDecodeError, TypeError):
+                                    pass
+                            elif isinstance(item, dict):
+                                tool_outputs.append(item)
+
+        # Suppress LLM text response when we have tool outputs —
+        # the tool cards already show the full output (matches vercel-ai)
+        if tool_outputs:
+            text = ""
+
+        return jsonify({"text": text, "toolOutputs": tool_outputs})
+
+    except RuntimeError as e:
+        return jsonify({"error": str(e), "text": "", "toolOutputs": []}), 500
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e), "text": "", "toolOutputs": []}), 500
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("AGENT_PORT", 8081))
+    print(f"Starting Agno Agent Service on http://localhost:{port}")
+    print(f"Config: {CONFIG_PATH}")
+    print(f"Agno available: {AGNO_AVAILABLE}")
+    app.run(host="0.0.0.0", port=port, debug=False)

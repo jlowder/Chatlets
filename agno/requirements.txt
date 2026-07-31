@@ -1,0 +1,4 @@
+agno
+flask
+flask-cors
+openai
