@@ -26,7 +26,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 │  rewrites → smolagents backend on :5000                    │
 └─────────────────────────────────────────────────────────────┘
                         │
-                        │ HTTP POST /api/chat { prompt }
+                        │ HTTP POST /api/chat { messages }
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              smolagents backend (port 5000)                │
@@ -35,7 +35,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 │  │ CodeAgent.run() │───▶│ bash Tool (@tool decorated)  │   │
 │  │                 │    │  - Python function           │   │
 │  │  ┌────────────┐ │    │  - subprocess.run(timeout)   │   │
-│  │  │   prompt   │ │    │  - 30s timeout              │   │
+│  │  │  messages  │ │    │  - 30s timeout              │   │
 │  │  └────────────┘ │    │  - returns stdout/stderr     │   │
 │  │        │        │    └───────────────────────────────┘   │
 │  │        │           ▲                            │         │
@@ -70,7 +70,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 | Property | Value |
 |----------|-------|
 | **Content-Type** | `application/json` |
-| **Request Body** | `{ prompt: string }` |
+| **Request Body** | `{ messages: Array<{ role, content }> }` |
 | **Success Response** | `{ text: string, toolOutputs: { stdout?: string, stderr?: string, error?: string }[] }` |
 | **Error Response** | `{ error: string }` |
 
@@ -80,10 +80,30 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `prompt` | `string` | Yes | User's chat message |
+| `messages` | `object[]` | Yes | Array of `{ role, content }` message objects |
 | `text` | `string` | Yes | LLM response text |
 | `toolOutputs` | `object[]` | No | Array of bash tool execution results |
 | `error` | `string` | No | Error message if request fails |
+
+---
+
+## Session Memory
+
+The API supports full conversation history. Every request sends the complete message array, allowing the agent to reference prior turns. The last message in the array is always the new user input; all prior messages provide context.
+
+- **Request shape**: `{ messages: Array<{ role: "user" | "assistant", content: string }> }`
+- **History length**: No hard limit — the full conversation is sent each turn
+- **Fallback**: If the request contains only `{ prompt: string }` (legacy format), the backend treats it as a single-user-message conversation
+
+### Implementation (smolagents)
+
+The backend joins the messages array into a conversation string and passes it to `agent.run()`:
+
+```python
+# Backend receives { messages: [{role, content}, ...] }
+conversation = "\n".join(f"{m['role']}: {m['content']}" for m in messages)
+result = agent.run(conversation)
+```
 
 ---
 
@@ -553,12 +573,12 @@ The shared frontend proxies to this backend via `shared/next.config.mjs` (`CHATL
 ## Data Flow Summary
 
 1. **User** types prompt and clicks Send in the shared frontend
-2. **Frontend** sends `POST /api/chat` with `{ prompt }`
+2. **Frontend** sends `POST /api/chat` with `{ messages }`
 3. **next.config.mjs** rewrites the request to `smolagents` backend on `:5000`
 4. **API Route** creates a smolagents `CodeAgent` with model, bash tool, and authorized imports
-5. **Agent** generates Python code to invoke `bash_tool(command="...")`
+5. **Agent** generates Python code to invoke `bash_tool(command="...")` from the full conversation context
 6. **CodeAgent** executes the generated code locally (safe by default)
-7. **LLM** generates code based on prompt and available tools
+7. **LLM** generates code based on the full conversation and available tools
 8. **bash_tool()** executes command via `subprocess.run()` (30s timeout)
    - **Allow List Check** verifies the base command is permitted (or "Allow All" is enabled)
 9. **Agent** iterates: generates code → executes → observes output → generates more code

@@ -26,7 +26,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 │  rewrites → maf backend on :5000                           │
 └─────────────────────────────────────────────────────────────┘
                         │
-                        │ HTTP POST /api/chat { prompt }
+                        │ HTTP POST /api/chat { messages }
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              maf backend (port 5000)                       │
@@ -36,7 +36,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 │  │                 │    │  - FunctionInvocationContext │   │
 │  │                 │    │  - subprocess.run(timeout)   │   │
 │  │  ┌────────────┐ │    │  - 30s timeout              │   │
-│  │  │   prompt   │ │    │  - returns stdout/stderr     │   │
+│  │  │  messages  │ │    │  - returns stdout/stderr     │   │
 │  │  └────────────┘ │    └───────────────────────────────┘   │
 │  │        │        │    ▲                            │      │
 │  │        └─────────┼────────────────────────────┘         │
@@ -70,7 +70,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 | Property | Value |
 |----------|-------|
 | **Content-Type** | `application/json` |
-| **Request Body** | `{ prompt: string }` |
+| **Request Body** | `{ messages: Array<{ role, content }> }` |
 | **Success Response** | `{ text: string, toolOutputs: { stdout?: string, stderr?: string, error?: string }[] }` |
 | **Error Response** | `{ error: string }` |
 
@@ -80,10 +80,36 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `prompt` | `string` | Yes | User's chat message |
+| `messages` | `object[]` | Yes | Array of `{ role, content }` message objects |
 | `text` | `string` | Yes | LLM response text |
 | `toolOutputs` | `object[]` | No | Array of bash tool execution results |
 | `error` | `string` | No | Error message if request fails |
+
+---
+
+## Session Memory
+
+The API supports full conversation history. Every request sends the complete message array, allowing the agent to reference prior turns. The last message in the array is always the new user input; all prior messages provide context.
+
+- **Request shape**: `{ messages: Array<{ role: "user" | "assistant", content: string }> }`
+- **History length**: No hard limit — the full conversation is sent each turn
+- **Fallback**: If the request contains only `{ prompt: string }` (legacy format), the backend treats it as a single-user-message conversation
+
+### Implementation (maf — Microsoft Agent Framework)
+
+The backend passes the full messages array to the MAF agent via its built-in session management:
+
+```python
+# Backend receives { messages: [{role, content}, ...] }
+session = agent.create_session()
+for m in messages:
+    if m['role'] == 'user':
+        await session.add_user_message(m['content'])
+    elif m['role'] == 'assistant':
+        await session.add_assistant_message(m['content'])
+last_message = messages[-1]['content']
+result = await agent.run(last_message, session=session)
+```
 
 ---
 
@@ -566,12 +592,12 @@ The shared frontend proxies to this backend via `shared/next.config.mjs` (`CHATL
 ## Data Flow Summary
 
 1. **User** types prompt and clicks Send in the shared frontend
-2. **Frontend** sends `POST /api/chat` with `{ prompt }`
+2. **Frontend** sends `POST /api/chat` with `{ messages }`
 3. **next.config.mjs** rewrites the request to `maf` backend on `:5000`
 4. **API Route** creates an MAF `Agent` with chat client, bash tool, and instructions
 5. **API Route** creates a `session` for conversation state
-6. **Agent** calls `agent.run(prompt, session=session)`
-7. **Agent** sends context + tool definitions to the LLM via the chat client
+6. **Agent** calls `agent.run(lastMessage, session=session)` — session maintains full conversation history
+7. **Agent** sends session context + tool definitions to the LLM via the chat client
 8. **LLM** processes prompt, may request tool calls
 9. **MAF** validates arguments, executes `bash_tool()` (30s timeout)
    - **Allow List Check** verifies the base command is permitted (or "Allow All" is enabled)

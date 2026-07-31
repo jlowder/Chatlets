@@ -66,7 +66,13 @@ The shared frontend proxies `/api/chat` to port 3001 (`CHATLET_BACKEND=agno`).
 
 **Request body:**
 ```json
-{ "prompt": "string" }
+{
+  "messages": [
+    { "role": "user", "content": "What is the area of Arizona?" },
+    { "role": "assistant", "content": "Arizona has an area of approximately 113,998 square miles." },
+    { "role": "user", "content": "And the population?" }
+  ]
+}
 ```
 
 **Response:**
@@ -118,6 +124,24 @@ Default allow list: `["ls", "pwd"]`
 Minimal proxy — forwards `POST /api/chat` to `http://localhost:8081/chat` unchanged. Handles 502 errors when Flask is unavailable.
 
 ---
+
+## Session Memory
+
+The API supports full conversation history. Every request sends the complete message array, allowing the agent to reference prior turns. The last message in the array is always the new user input; all prior messages provide context.
+
+- **Request shape**: `{ messages: Array<{ role: "user" | "assistant", content: string }> }`
+- **History length**: No hard limit — the full conversation is sent each turn
+- **Fallback**: If the request contains only `{ prompt: string }` (legacy format), the backend treats it as a single-user-message conversation
+
+### Implementation (agno)
+
+The backend builds a full conversation string from the messages array and passes it as input to `agent.run()`:
+
+```python
+# Backend receives { messages: [{role, content}, ...] }
+conversation = "\n".join(f"{m['role']}: {m['content']}" for m in messages)
+result = agent.run(input=conversation)
+```
 
 ## LLM Configuration
 

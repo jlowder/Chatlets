@@ -26,7 +26,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 │  rewrites → pydantic backend on :5000                      │
 └─────────────────────────────────────────────────────────────┘
                         │
-                        │ HTTP POST /api/chat { prompt }
+                        │ HTTP POST /api/chat { messages }
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              pydantic backend (port 5000)                  │
@@ -35,7 +35,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 │  │ Agent.run()     │───▶│ bash Tool (@agent.tool)      │   │
 │  │                 │    │  - RunContext[DepT]          │   │
 │  │  ┌────────────┐ │    │  - subprocess.run(timeout)   │   │
-│  │  │   prompt   │ │    │  - 30s timeout              │   │
+│  │  │  messages  │ │    │  - 30s timeout              │   │
 │  │  └────────────┘ │    │  - returns stdout/stderr     │   │
 │  │        │        │    └───────────────────────────────┘   │
 │  │        │           ▲                            │         │
@@ -71,7 +71,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 | Property | Value |
 |----------|-------|
 | **Content-Type** | `application/json` |
-| **Request Body** | `{ prompt: string }` |
+| **Request Body** | `{ messages: Array<{ role, content }> }` |
 | **Success Response** | `{ text: string, toolOutputs: { stdout?: string, stderr?: string, error?: string }[] }` |
 | **Error Response** | `{ error: string }` |
 
@@ -81,10 +81,30 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `prompt` | `string` | Yes | User's chat message |
+| `messages` | `object[]` | Yes | Array of `{ role, content }` message objects |
 | `text` | `string` | Yes | LLM response text |
 | `toolOutputs` | `object[]` | No | Array of bash tool execution results |
 | `error` | `string` | No | Error message if request fails |
+
+---
+
+## Session Memory
+
+The API supports full conversation history. Every request sends the complete message array, allowing the agent to reference prior turns. The last message in the array is always the new user input; all prior messages provide context.
+
+- **Request shape**: `{ messages: Array<{ role: "user" | "assistant", content: string }> }`
+- **History length**: No hard limit — the full conversation is sent each turn
+- **Fallback**: If the request contains only `{ prompt: string }` (legacy format), the backend treats it as a single-user-message conversation
+
+### Implementation (pydantic)
+
+The backend joins the messages array into a conversation string and passes it to `agent.run()`:
+
+```python
+# Backend receives { messages: [{role, content}, ...] }
+conversation = "\n".join(f"{m['role']}: {m['content']}" for m in messages)
+result = await agent.run(conversation, deps=deps, usage_limits=UsageLimits(tool_call_limit=5))
+```
 
 ---
 
@@ -599,13 +619,13 @@ The shared frontend proxies to this backend via `shared/next.config.mjs` (`CHATL
 ## Data Flow Summary
 
 1. **User** types prompt and clicks Send in the shared frontend
-2. **Frontend** sends `POST /api/chat` with `{ prompt }`
+2. **Frontend** sends `POST /api/chat` with `{ messages }`
 3. **next.config.mjs** rewrites the request to `pydantic` backend on `:5000`
 4. **API Route** creates a Pydantic AI `Agent[ChatDeps, str]` with model, bash tool, and system prompt
 5. **API Route** creates `ChatDeps` instance with allow list configuration
-6. **Agent** calls `agent.run(prompt, deps=deps, usage_limits=UsageLimits(tool_call_limit=5))`
-7. **pydantic-graph** traverses: `UserPromptNode → ModelRequestNode → CallToolsNode → ... → End`
-8. **LLM** processes prompt, may request tool calls
+6. **Agent** joins the conversation from messages and calls `agent.run(conversation, deps=deps, usage_limits=UsageLimits(tool_call_limit=5))`
+7. **pydantic-graph** traverses: `UserPromptNode → ModelRequestNode → CallToolsNode → ... → End` with full conversation context
+8. **LLM** processes the full conversation, may request tool calls
 9. **Pydantic AI** validates arguments (via type hints), executes `bash_tool()` (30s timeout)
    - **Allow List Check** verifies the base command is permitted (via `ctx.deps.allow_list`)
 10. **Tool results** added to message history; graph loop continues

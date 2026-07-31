@@ -28,7 +28,13 @@ The shared frontend proxies `/api/chat` to `http://localhost:4000/api/chat` (con
 
 **Request body:**
 ```json
-{ "prompt": "string" }
+{
+  "messages": [
+    { "role": "user", "content": "What is the area of Arizona?" },
+    { "role": "assistant", "content": "Arizona has an area of approximately 113,998 square miles." },
+    { "role": "user", "content": "And the population?" }
+  ]
+}
 ```
 
 **Response (200):**
@@ -41,12 +47,32 @@ The shared frontend proxies `/api/chat` to `http://localhost:4000/api/chat` (con
 
 **Response (400):**
 ```json
-{ "error": "Missing prompt" }
+{ "error": "Missing messages" }
 ```
 
 **Response (500):**
 ```json
 { "error": "string" }
+```
+
+---
+
+## Session Memory
+
+The API supports full conversation history. Every request sends the complete message array, allowing the agent to reference prior turns. The last message in the array is always the new user input; all prior messages provide context.
+
+- **Request shape**: `{ messages: Array<{ role: "user" | "assistant", content: string }> }`
+- **History length**: No hard limit — the full conversation is sent each turn
+- **Fallback**: If the request contains only `{ prompt: string }` (legacy format), the backend treats it as a single-user-message conversation
+
+### Implementation (vercel-ai)
+
+The backend joins the messages array into a conversation string and passes it to `generateText()`:
+
+```typescript
+// Backend receives { messages: [{role, content}, ...] }
+const conversation = messages.map(m => `${m.role}: ${m.content}`).join("\n");
+const result = await generateText({ model, prompt: conversation, tools: { bash }, maxSteps: 5 });
 ```
 
 ---
@@ -152,12 +178,13 @@ vercel-ai/
 
 ```ts
 POST(request):
-  1. Parse { prompt } from body
+  1. Parse { messages } from body
   2. Load config.json
-  3. Create OpenAI-compatible provider
-  4. Call generateText({ model, prompt, tools: { bash }, maxSteps: 5 })
-  5. Extract text + toolOutputs from response steps
-  6. Return { text, toolOutputs }
+  3. Build conversation string from messages
+  4. Create OpenAI-compatible provider
+  5. Call generateText({ model, prompt: conversation, tools: { bash }, maxSteps: 5 })
+  6. Extract text + toolOutputs from response steps
+  7. Return { text, toolOutputs }
 ```
 
 ### `lib/execAsync.ts`

@@ -26,7 +26,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 │  rewrites → langchain backend on :5000                     │
 └─────────────────────────────────────────────────────────────┘
                         │
-                        │ HTTP POST /api/chat { prompt }
+                        │ HTTP POST /api/chat { messages }
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              langchain backend (port 5000)                 │
@@ -36,7 +36,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 │  │ + agent.invoke()│    │  - zod input schema          │   │
 │  │                 │    │  - execAsync(cmd, timeout)   │   │
 │  │  ┌────────────┐ │    │  - 30s timeout              │   │
-│  │  │   prompt   │ │    │  - returns stdout/stderr     │   │
+│  │  │  messages  │ │    │  - returns stdout/stderr     │   │
 │  │  └────────────┘ │    └───────────────────────────────┘   │
 │  │        │        │    ▲                            │      │
 │  │        └─────────┼────────────────────────────┘         │
@@ -70,7 +70,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 | Property | Value |
 |----------|-------|
 | **Content-Type** | `application/json` |
-| **Request Body** | `{ prompt: string }` |
+| **Request Body** | `{ messages: Array<{ role, content }> }` |
 | **Success Response** | `{ text: string, toolOutputs: { stdout?: string, stderr?: string, error?: string }[] }` |
 | **Error Response** | `{ error: string }` |
 
@@ -80,10 +80,34 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `prompt` | `string` | Yes | User's chat message |
+| `messages` | `object[]` | Yes | Array of `{ role, content }` message objects |
 | `text` | `string` | Yes | LLM response text |
 | `toolOutputs` | `object[]` | No | Array of bash tool execution results |
 | `error` | `string` | No | Error message if request fails |
+
+---
+
+## Session Memory
+
+The API supports full conversation history. Every request sends the complete message array, allowing the agent to reference prior turns. The last message in the array is always the new user input; all prior messages provide context.
+
+- **Request shape**: `{ messages: Array<{ role: "user" | "assistant", content: string }> }`
+- **History length**: No hard limit — the full conversation is sent each turn
+- **Fallback**: If the request contains only `{ prompt: string }` (legacy format), the backend treats it as a single-user-message conversation
+
+### Implementation (langchain)
+
+The backend passes the full messages array to the LangGraph agent via `HumanMessage` objects:
+
+```typescript
+// Backend receives { messages: [{role, content}, ...] }
+const chatMessages = req.body.messages.map(m => new HumanMessage(m.content));
+const result = await agent.invoke({
+  messages: chatMessages,
+}, {
+  configurable: { thread_id: sessionId },
+});
+```
 
 ---
 
@@ -373,11 +397,11 @@ The shared frontend proxies to this backend via `shared/next.config.mjs` (`CHATL
 ## Data Flow Summary
 
 1. **User** types prompt and clicks Send in the shared frontend
-2. **Frontend** sends `POST /api/chat` with `{ prompt }`
+2. **Frontend** sends `POST /api/chat` with `{ messages }`
 3. **next.config.mjs** rewrites the request to `langchain` backend on `:5000`
 4. **API Route** creates a LangGraph agent via `createReactAgent()` with LLM + bash tool
-5. **Agent** invokes the LLM with `[new HumanMessage(prompt)]`
-6. **LLM** processes prompt, may call bash tool (up to `maxIterations: 5`)
+5. **Agent** invokes the LLM with the full conversation as `HumanMessage` objects
+6. **LLM** processes the conversation, may call bash tool (up to `maxIterations: 5`)
 7. **Bash Tool** executes command via `execAsync()` (30s timeout)
    - **Allow List Check** verifies the base command is permitted (or "Allow All" is enabled)
 8. **Agent** collects tool results (as `ToolMessage` objects) and continues until final answer

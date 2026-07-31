@@ -26,7 +26,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 │  rewrites → crewai backend on :5000                        │
 └─────────────────────────────────────────────────────────────┘
                         │
-                        │ HTTP POST /api/chat { prompt }
+                        │ HTTP POST /api/chat { messages }
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              crewai backend (port 5000)                    │
@@ -36,7 +36,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 │  │ .kickoff()      │    │  - zod input schema          │   │
 │  │                 │    │  - execAsync(cmd, timeout)   │   │
 │  │  ┌────────────┐ │    │  - 30s timeout              │   │
-│  │  │   prompt   │ │    │  - returns stdout/stderr     │   │
+│  │  │  messages  │ │    │  - returns stdout/stderr     │   │
 │  │  └────────────┘ │    └───────────────────────────────┘   │
 │  │        │        │    ▲                            │      │
 │  │        └─────────┼────────────────────────────┘         │
@@ -71,7 +71,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 | Property | Value |
 |----------|-------|
 | **Content-Type** | `application/json` |
-| **Request Body** | `{ prompt: string }` |
+| **Request Body** | `{ messages: Array<{ role, content }> }` |
 | **Success Response** | `{ text: string, toolOutputs: { stdout?: string, stderr?: string, error?: string }[] }` |
 | **Error Response** | `{ error: string }` |
 
@@ -81,10 +81,37 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `prompt` | `string` | Yes | User's chat message |
+| `messages` | `object[]` | Yes | Array of `{ role, content }` message objects |
 | `text` | `string` | Yes | LLM response text |
 | `toolOutputs` | `object[]` | No | Array of bash tool execution results |
 | `error` | `string` | No | Error message if request fails |
+
+---
+
+## Session Memory
+
+The API supports full conversation history. Every request sends the complete message array, allowing the agent to reference prior turns. The last message in the array is always the new user input; all prior messages provide context.
+
+- **Request shape**: `{ messages: Array<{ role: "user" | "assistant", content: string }> }`
+- **History length**: No hard limit — the full conversation is sent each turn
+- **Fallback**: If the request contains only `{ prompt: string }` (legacy format), the backend treats it as a single-user-message conversation
+
+### Implementation (crewai)
+
+The backend reads the messages array and builds a context string that is prepended to the task description:
+
+```typescript
+// Backend receives { messages: [{role, content}, ...] }
+const messages = req.body.messages;
+const context = messages
+  .slice(0, -1)
+  .map(m => `${m.role}: ${m.content}`)
+  .join("\n");
+const task = new Task({
+  description: context ? `${context}\n\nUser request: ${lastMessage.content}` : lastMessage.content,
+  // ...
+});
+```
 
 ---
 
@@ -347,12 +374,12 @@ The shared frontend proxies to this backend via `shared/next.config.mjs` (`CHATL
 ## Data Flow Summary
 
 1. **User** types prompt and clicks Send in the shared frontend
-2. **Frontend** sends `POST /api/chat` with `{ prompt }`
+2. **Frontend** sends `POST /api/chat` with `{ messages }`
 3. **next.config.mjs** rewrites the request to `crewai` backend on `:5000`
 4. **API Route** creates a CrewAI `Agent` with role, goal, backstory, and bash tool
-5. **API Route** creates a `Task` describing the user prompt
+5. **API Route** creates a `Task` describing the user's request from the last message
 6. **API Route** assembles a `Crew` with the agent and task
-7. **Crew** executes via `kickoff()` — the agent processes the prompt
+7. **Crew** executes via `kickoff()` — the agent processes the full conversation context
 8. **Agent** may call bash tool (up to `maxIter: 5` times)
 9. **Bash Tool** executes command via `execAsync()` (30s timeout)
    - **Allow List Check** verifies the base command is permitted (or "Allow All" is enabled)

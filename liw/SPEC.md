@@ -26,7 +26,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 │  rewrites → liw backend on :5000                           │
 └─────────────────────────────────────────────────────────────┘
                         │
-                        │ HTTP POST /api/chat { prompt }
+                        │ HTTP POST /api/chat { messages }
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              liw backend (port 5000)                       │
@@ -36,7 +36,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 │  │                 │    │  - FunctionTool.from_defaults│   │
 │  │                 │    │  - subprocess.run(timeout)   │   │
 │  │  ┌────────────┐ │    │  - 30s timeout              │   │
-│  │  │   prompt   │ │    │  - returns stdout/stderr     │   │
+│  │  │  messages  │ │    │  - returns stdout/stderr     │   │
 │  │  └────────────┘ │    └───────────────────────────────┘   │
 │  │        │        │    ▲                            │      │
 │  │        └─────────┼────────────────────────────┘         │
@@ -70,7 +70,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 | Property | Value |
 |----------|-------|
 | **Content-Type** | `application/json` |
-| **Request Body** | `{ prompt: string }` |
+| **Request Body** | `{ messages: Array<{ role, content }> }` |
 | **Success Response** | `{ text: string, toolOutputs: { stdout?: string, stderr?: string, error?: string }[] }` |
 | **Error Response** | `{ error: string }` |
 
@@ -80,10 +80,33 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `prompt` | `string` | Yes | User's chat message |
+| `messages` | `object[]` | Yes | Array of `{ role, content }` message objects |
 | `text` | `string` | Yes | LLM response text |
 | `toolOutputs` | `object[]` | No | Array of bash tool execution results |
 | `error` | `string` | No | Error message if request fails |
+
+---
+
+## Session Memory
+
+The API supports full conversation history. Every request sends the complete message array, allowing the agent to reference prior turns. The last message in the array is always the new user input; all prior messages provide context.
+
+- **Request shape**: `{ messages: Array<{ role: "user" | "assistant", content: string }> }`
+- **History length**: No hard limit — the full conversation is sent each turn
+- **Fallback**: If the request contains only `{ prompt: string }` (legacy format), the backend treats it as a single-user-message conversation
+
+### Implementation (liw — LlamaIndex Workflows)
+
+The backend passes the full messages array to the LlamaIndex workflow, which uses `ChatMemoryBuffer` + `ctx.store` for persistent state:
+
+```python
+# Backend receives { messages: [{role, content}, ...] }
+memory = ChatMemoryBuffer.from_defaults(llm=llm)
+for m in messages:
+    memory.put(ChatMessage(role=m['role'], content=m['content']))
+await ctx.store.set("memory", memory)
+result = await workflow.run(input=messages[-1]['content'], ctx=ctx)
+```
 
 ---
 
@@ -514,13 +537,13 @@ The shared frontend proxies to this backend via `shared/next.config.mjs` (`CHATL
 ## Data Flow Summary
 
 1. **User** types prompt and clicks Send in the shared frontend
-2. **Frontend** sends `POST /api/chat` with `{ prompt }`
+2. **Frontend** sends `POST /api/chat` with `{ messages }`
 3. **next.config.mjs** rewrites the request to `liw` backend on `:5000`
-4. **API Route** creates a `ChatWorkflow` with LLM + bash tool + typed steps
-5. **Workflow** starts with `StartEvent(input=prompt)` → `prepare_chat_history()` step
+4. **API Route** creates a `ChatWorkflow` with LLM + bash tool + typed memory from the conversation
+5. **Workflow** starts with `StartEvent` containing the new user message; `prepare_chat_history()` loads full conversation from memory
 6. **prepare_chat_history** builds chat history and returns `InputEvent`
-7. **InputEvent** triggers `handle_llm_input()` step → LLM call with tools
-8. **LLM** processes chat history, may emit tool calls
+7. **InputEvent** triggers `handle_llm_input()` step → LLM call with full chat history + tools
+8. **LLM** processes full chat history, may emit tool calls
 9. **handle_llm_input** routes to `ToolCallEvent` (if tools) or `StopEvent` (if done)
 10. **ToolCallEvent** triggers `handle_tool_calls()` step
 11. **handle_tool_calls** executes `bash_tool()` via `FunctionTool` (30s timeout)

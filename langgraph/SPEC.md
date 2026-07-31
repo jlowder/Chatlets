@@ -26,7 +26,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 │  rewrites → langgraph backend on :5000                     │
 └─────────────────────────────────────────────────────────────┘
                         │
-                        │ HTTP POST /api/chat { prompt }
+                        │ HTTP POST /api/chat { messages }
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              langgraph backend (port 5000)                 │
@@ -38,7 +38,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 │  │ .invoke()       │    │  - 30s timeout              │   │
 │  │                 │    │  - returns stdout/stderr     │   │
 │  │  ┌────────────┐ │    └───────────────────────────────┘   │
-│  │  │   prompt   │ │    ▲                            │      │
+│  │  │  messages  │ │    ▲                            │      │
 │  │  └────────────┘ │    │                            │      │
 │  │        │        └────┼────────────────────────────┘         │
 │  │        └─────────────┼────────────────────────────┘         │
@@ -72,7 +72,7 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 | Property | Value |
 |----------|-------|
 | **Content-Type** | `application/json` |
-| **Request Body** | `{ prompt: string }` |
+| **Request Body** | `{ messages: Array<{ role, content }> }` |
 | **Success Response** | `{ text: string, toolOutputs: { stdout?: string, stderr?: string, error?: string }[] }` |
 | **Error Response** | `{ error: string }` |
 
@@ -82,10 +82,34 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `prompt` | `string` | Yes | User's chat message |
+| `messages` | `object[]` | Yes | Array of `{ role, content }` message objects |
 | `text` | `string` | Yes | LLM response text |
 | `toolOutputs` | `object[]` | No | Array of bash tool execution results |
 | `error` | `string` | No | Error message if request fails |
+
+---
+
+## Session Memory
+
+The API supports full conversation history. Every request sends the complete message array, allowing the agent to reference prior turns. The last message in the array is always the new user input; all prior messages provide context.
+
+- **Request shape**: `{ messages: Array<{ role: "user" | "assistant", content: string }> }`
+- **History length**: No hard limit — the full conversation is sent each turn
+- **Fallback**: If the request contains only `{ prompt: string }` (legacy format), the backend treats it as a single-user-message conversation
+
+### Implementation (langgraph)
+
+The backend passes the full messages array as `HumanMessage` objects to the LangGraph state machine:
+
+```typescript
+// Backend receives { messages: [{role, content}, ...] }
+const chatMessages = req.body.messages.map(m => new HumanMessage(m.content));
+const result = await graph.invoke({
+  messages: chatMessages,
+}, {
+  configurable: { thread_id: sessionId },
+});
+```
 
 ---
 
@@ -510,11 +534,11 @@ The shared frontend proxies to this backend via `shared/next.config.mjs` (`CHATL
 ## Data Flow Summary
 
 1. **User** types prompt and clicks Send in the shared frontend
-2. **Frontend** sends `POST /api/chat` with `{ prompt }`
+2. **Frontend** sends `POST /api/chat` with `{ messages }`
 3. **next.config.mjs** rewrites the request to `langgraph` backend on `:5000`
 4. **API Route** builds a LangGraph `StateGraph` with `model` node + `tools` node
-5. **Graph** starts at `model` node, invoking the LLM with `[new HumanMessage(prompt)]`
-6. **LLM** processes prompt and may emit tool calls
+5. **Graph** starts at `model` node, invoking the LLM with the full conversation as `HumanMessage` objects
+6. **LLM** processes the conversation and may emit tool calls
 7. **Router** checks `lastMessage.tool_calls` — if present, routes to `tools` node via `addConditionalEdges()`
 8. **Tools Node** executes each tool (bash command via `execAsync()`, 30s timeout)
    - **Allow List Check** verifies the base command is permitted (or "Allow All" is enabled)
