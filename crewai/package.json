@@ -1,0 +1,21 @@
+{
+  "name": "chatlets-crewai-backend",
+  "private": true,
+  "scripts": {
+    "dev": "npx next dev -p 3002",
+    "agent": "python agent_service.py",
+    "agent:venv": "node scripts/find-python.mjs",
+    "dev:all": "concurrently --kill-others-on-fail \"npm run agent\" \"npm run dev\"",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "^16.2.10"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "19.2.17",
+    "concurrently": "^9",
+    "typescript": "^5"
+  }
+}

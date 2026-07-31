@@ -36,6 +36,7 @@ CHATLET_BACKEND=agno bun dev
 **Important:** Before starting the shared frontend, make sure the selected backend's services are running:
 - `vercel-ai`: Run `bun dev` in the `vercel-ai/` directory (single service on port 4000)
 - `agno`: Run `npm run dev:all` in the `agno/` directory (starts **two** services: Flask on :8081 + proxy on :3001)
+- `crewai`: Run `npm run dev:all` in the `crewai/` directory (starts **two** services: Flask on :5000 + proxy on :3002)
 
 Each backend may need its own setup. See individual backend SPEC.md files.
 
@@ -45,7 +46,7 @@ Each backend may need its own setup. See individual backend SPEC.md files.
 |-------------|--------|-------------|---------------------|
 | Vercel AI   | ✅ Done | 4000       | `bun dev` in vercel-ai/ |
 | Agno        | ✅ Done | 3001        | `npm run dev:all` in agno/ |
-| CrewAI      | ⬜      | —           |                     |
+| CrewAI      | ✅ Done | 3002        | `npm run dev:all` in crewai/ |
 | LangChain   | ⬜      | —           |                     |
 | LangGraph   | ⬜      | —           |                     |
 | LIW         | ⬜      | —           |                     |

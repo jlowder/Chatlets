@@ -1,0 +1,5 @@
+crewai
+flask
+flask-cors
+langchain-openai
+pydantic

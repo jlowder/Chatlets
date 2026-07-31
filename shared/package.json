@@ -2,7 +2,7 @@
   "name": "chatlets-shared",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3000",
+    "dev": "npx next dev -p 3000",
     "build": "next build",
     "start": "next start"
   },

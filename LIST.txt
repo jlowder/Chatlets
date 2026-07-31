@@ -1,5 +1,5 @@
 [x] agno
-[ ] crewai
+[x] crewai
 [ ] langchain
 [ ] langgraph
 [ ] liw
