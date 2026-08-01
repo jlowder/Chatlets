@@ -3,7 +3,7 @@
 [x] langchain
 [x] langgraph
 [x] liw
-[ ] maf
+[x] maf
 [ ] mastra
 [ ] pydantic
 [ ] smolagents

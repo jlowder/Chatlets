@@ -40,6 +40,7 @@ CHATLET_BACKEND=agno bun dev
 - `langchain`: Run `npm run dev` in the `langchain/` directory (single service on port 5001)
 - `langgraph`: Run `npm run dev` in the `langgraph/` directory (single service on port 5002)
 - `liw`: Run `npm run dev:all` in the `liw/` directory (starts **two** services: Flask agent on :5000 + proxy on :5003)
+- `maf`: Run `npm run dev:all` in the `maf/` directory (starts **two** services: Flask agent on :5004 + proxy on :5005)
 
 Each backend may need its own setup. See individual backend SPEC.md files.
 
@@ -53,7 +54,7 @@ Each backend may need its own setup. See individual backend SPEC.md files.
 | LangChain   | ✅ Done | 5001        | `npm run dev` in langchain/ |
 | LangGraph   | ✅ Done | 5002        | `npm run dev` in langgraph/ |
 | LIW         | ✅ Done | 5003        | `npm run dev:all` in liw/ |
-| MAF         | ⬜      | —           |                     |
+| MAF         | ✅ Done | 5005        | `npm run dev:all` in maf/ |
 | Mastra      | ⬜      | —           |                     |
 | Pydantic    | ⬜      | —           |                     |
 | SmolAgents  | ⬜      | —           |                     |

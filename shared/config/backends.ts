@@ -13,6 +13,7 @@ export const BACKENDS: BackendDefinition[] = [
   { name: 'langchain', label: 'LangChain', url: 'http://localhost:5001', port: 5001, description: 'LangChain + LangGraph createReactAgent with checkpointing' },
   { name: 'langgraph', label: 'LangGraph', url: 'http://localhost:5002', port: 5002, description: 'LangGraph StateGraph with explicit model/tools nodes and conditional routing' },
   { name: 'liw', label: 'LlamaIndex Workflows', url: 'http://localhost:5003', port: 5003, description: 'LlamaIndex Workflows event-driven agent with Flask service + Next.js proxy' },
+  { name: 'maf', label: 'Microsoft Agent Framework', url: 'http://localhost:5005', port: 5005, description: 'Microsoft Agent Framework with @tool decorator and session management' },
 ];
 
 export function getBackendUrl(): string | null {

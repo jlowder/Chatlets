@@ -9,6 +9,7 @@ const nextConfig = {
       'langchain': { url: 'http://localhost:5001', path: '/api/chat' },
       'langgraph': { url: 'http://localhost:5002', path: '/api/chat' },
       'liw': { url: 'http://localhost:5003', path: '/api/chat' },
+      'maf': { url: 'http://localhost:5005', path: '/api/chat' },
     };
     const { url, path: destPath } = backends[backend];
     if (!url) return [];
