@@ -1,0 +1,23 @@
+{
+  "name": "langgraph",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "npx next dev -p 5002",
+    "build": "npx next build",
+    "start": "npx next start"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.50",
+    "@langchain/langgraph": "^0.2.50",
+    "@langchain/openai": "^0.5.12",
+    "next": "16.2.10",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "eslint": "^9",
+    "typescript": "^5"
+  }
+}

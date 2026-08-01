@@ -37,7 +37,8 @@ CHATLET_BACKEND=agno bun dev
 - `vercel-ai`: Run `bun dev` in the `vercel-ai/` directory (single service on port 4000)
 - `agno`: Run `npm run dev:all` in the `agno/` directory (starts **two** services: Flask on :8081 + proxy on :3001)
 - `crewai`: Run `npm run dev:all` in the `crewai/` directory (starts **two** services: Flask on :5000 + proxy on :3002)
-- `langchain`: Run `npm run dev` in the `langchain/` directory (single service on port 5000)
+- `langchain`: Run `npm run dev` in the `langchain/` directory (single service on port 5001)
+- `langgraph`: Run `npm run dev` in the `langgraph/` directory (single service on port 5002)
 
 Each backend may need its own setup. See individual backend SPEC.md files.
 
@@ -49,8 +50,7 @@ Each backend may need its own setup. See individual backend SPEC.md files.
 | Agno        | ✅ Done | 3001        | `npm run dev:all` in agno/ |
 | CrewAI      | ✅ Done | 3002        | `npm run dev:all` in crewai/ |
 | LangChain   | ✅ Done | 5001        | `npm run dev` in langchain/ |
-| LangGraph   | ⬜      | —           |                     |
-| LangGraph   | ⬜      | —           |                     |
+| LangGraph   | ✅ Done | 5002        | `npm run dev` in langgraph/ |
 | LIW         | ⬜      | —           |                     |
 | MAF         | ⬜      | —           |                     |
 | Mastra      | ⬜      | —           |                     |

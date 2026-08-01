@@ -11,6 +11,7 @@ export const BACKENDS: BackendDefinition[] = [
   { name: 'agno', label: 'Agno', url: 'http://localhost:3001', port: 3001, description: 'Agno Python agent with Flask service + Next.js proxy' },
   { name: 'crewai', label: 'CrewAI', url: 'http://localhost:3002', port: 3002, description: 'CrewAI Python agent with Flask service + Next.js proxy' },
   { name: 'langchain', label: 'LangChain', url: 'http://localhost:5001', port: 5001, description: 'LangChain + LangGraph createReactAgent with checkpointing' },
+  { name: 'langgraph', label: 'LangGraph', url: 'http://localhost:5002', port: 5002, description: 'LangGraph StateGraph with explicit model/tools nodes and conditional routing' },
 ];
 
 export function getBackendUrl(): string | null {

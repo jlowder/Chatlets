@@ -1,7 +1,7 @@
 [x] agno
 [x] crewai
 [x] langchain
-[ ] langgraph
+[x] langgraph
 [ ] liw
 [ ] maf
 [ ] mastra
