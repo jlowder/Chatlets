@@ -5,6 +5,6 @@
 [x] liw
 [x] maf
 [x] mastra
-[ ] pydantic
+[x] pydantic
 [ ] smolagents
 [x] vercel-ai

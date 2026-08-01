@@ -15,6 +15,7 @@ export const BACKENDS: BackendDefinition[] = [
   { name: 'liw', label: 'LlamaIndex Workflows', url: 'http://localhost:5003', port: 5003, description: 'LlamaIndex Workflows event-driven agent with Flask service + Next.js proxy' },
   { name: 'maf', label: 'Microsoft Agent Framework', url: 'http://localhost:5005', port: 5005, description: 'Microsoft Agent Framework with @tool decorator and session management' },
   { name: 'mastra', label: 'Mastra', url: 'http://localhost:5007', port: 5007, description: 'Mastra AI framework with Agent, Model Router, and createTool' },
+  { name: 'pydantic', label: 'Pydantic AI', url: 'http://localhost:5009', port: 5009, description: 'Pydantic AI framework with type-safe agents and dependency injection' },
 ];
 
 export function getBackendUrl(): string | null {

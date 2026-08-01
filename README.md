@@ -56,7 +56,7 @@ Each backend may need its own setup. See individual backend SPEC.md files.
 | LIW         | ✅ Done | 5003        | `npm run dev:all` in liw/ |
 | MAF         | ✅ Done | 5005        | `npm run dev:all` in maf/ |
 | Mastra      | ✅ Done | 5007        | `npm run dev` in mastra/  |
-| Pydantic    | ⬜      | —           |                     |
+| Pydantic AI | ✅ Done | 5009        | `npm run dev:all` in pydantic/ |
 | SmolAgents  | ⬜      | —           |                     |
 
 ## Adding a New Framework
