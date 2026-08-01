@@ -4,7 +4,7 @@
 [x] langgraph
 [x] liw
 [x] maf
-[ ] mastra
+[x] mastra
 [ ] pydantic
 [ ] smolagents
 [x] vercel-ai

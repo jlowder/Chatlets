@@ -1,0 +1,18 @@
+{
+  "name": "mastra",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "npx next dev -p 5007",
+    "build": "npx next build",
+    "start": "npx next start"
+  },
+  "dependencies": {
+    "next": "16.2.10"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/node-fetch": "^2.6.0",
+    "typescript": "^5"
+  }
+}

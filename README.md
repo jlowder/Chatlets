@@ -55,7 +55,7 @@ Each backend may need its own setup. See individual backend SPEC.md files.
 | LangGraph   | ✅ Done | 5002        | `npm run dev` in langgraph/ |
 | LIW         | ✅ Done | 5003        | `npm run dev:all` in liw/ |
 | MAF         | ✅ Done | 5005        | `npm run dev:all` in maf/ |
-| Mastra      | ⬜      | —           |                     |
+| Mastra      | ✅ Done | 5007        | `npm run dev` in mastra/  |
 | Pydantic    | ⬜      | —           |                     |
 | SmolAgents  | ⬜      | —           |                     |
 

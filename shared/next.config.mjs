@@ -10,6 +10,7 @@ const nextConfig = {
       'langgraph': { url: 'http://localhost:5002', path: '/api/chat' },
       'liw': { url: 'http://localhost:5003', path: '/api/chat' },
       'maf': { url: 'http://localhost:5005', path: '/api/chat' },
+      'mastra': { url: 'http://localhost:5007', path: '/api/chat' },
     };
     const { url, path: destPath } = backends[backend];
     if (!url) return [];
