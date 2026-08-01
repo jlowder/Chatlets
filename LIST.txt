@@ -1,6 +1,6 @@
 [x] agno
 [x] crewai
-[ ] langchain
+[x] langchain
 [ ] langgraph
 [ ] liw
 [ ] maf

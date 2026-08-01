@@ -23,13 +23,13 @@ A minimal chat backend that connects to an OpenAI-compatible LLM with bash execu
 │        │ fetch POST /api/chat                               │
 │        ▼                                                    │
 │  next.config.mjs (CHATLET_BACKEND=langchain)                │
-│  rewrites → langchain backend on :5000                     │
+│  rewrites → langchain backend on :5001                     │
 └─────────────────────────────────────────────────────────────┘
                         │
                         │ HTTP POST /api/chat { messages }
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              langchain backend (port 5000)                 │
+│              langchain backend (port 5001)                 │
 │                                                             │
 │  ┌─────────────────┐    ┌───────────────────────────────┐   │
 │  │ createReactAgent│───▶│ bash Tool                   │   │
@@ -387,7 +387,7 @@ Tool results are extracted from `result.messages[]` as `ToolMessage` objects con
 ```bash
 cd langchain
 npm install
-npm run dev    # starts backend on port 5000
+npm run dev    # starts backend on port 5001
 ```
 
 The shared frontend proxies to this backend via `shared/next.config.mjs` (`CHATLET_BACKEND=langchain`). After implementing, add your port and URL to `shared/config/backends.ts`.
@@ -398,7 +398,7 @@ The shared frontend proxies to this backend via `shared/next.config.mjs` (`CHATL
 
 1. **User** types prompt and clicks Send in the shared frontend
 2. **Frontend** sends `POST /api/chat` with `{ messages }`
-3. **next.config.mjs** rewrites the request to `langchain` backend on `:5000`
+3. **next.config.mjs** rewrites the request to `langchain` backend on `:5001`
 4. **API Route** creates a LangGraph agent via `createReactAgent()` with LLM + bash tool
 5. **Agent** invokes the LLM with the full conversation as `HumanMessage` objects
 6. **LLM** processes the conversation, may call bash tool (up to `maxIterations: 5`)

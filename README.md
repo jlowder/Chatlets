@@ -37,6 +37,7 @@ CHATLET_BACKEND=agno bun dev
 - `vercel-ai`: Run `bun dev` in the `vercel-ai/` directory (single service on port 4000)
 - `agno`: Run `npm run dev:all` in the `agno/` directory (starts **two** services: Flask on :8081 + proxy on :3001)
 - `crewai`: Run `npm run dev:all` in the `crewai/` directory (starts **two** services: Flask on :5000 + proxy on :3002)
+- `langchain`: Run `npm run dev` in the `langchain/` directory (single service on port 5000)
 
 Each backend may need its own setup. See individual backend SPEC.md files.
 
@@ -47,7 +48,8 @@ Each backend may need its own setup. See individual backend SPEC.md files.
 | Vercel AI   | ✅ Done | 4000       | `bun dev` in vercel-ai/ |
 | Agno        | ✅ Done | 3001        | `npm run dev:all` in agno/ |
 | CrewAI      | ✅ Done | 3002        | `npm run dev:all` in crewai/ |
-| LangChain   | ⬜      | —           |                     |
+| LangChain   | ✅ Done | 5001        | `npm run dev` in langchain/ |
+| LangGraph   | ⬜      | —           |                     |
 | LangGraph   | ⬜      | —           |                     |
 | LIW         | ⬜      | —           |                     |
 | MAF         | ⬜      | —           |                     |
@@ -81,7 +83,7 @@ All backends must implement:
 
 ```
 POST /chat  (or /api/chat for Next.js backends)
-  Request:  { "prompt": "string" }
+  Request:  { "messages": [{ "role": "user"|"assistant", "content": "..." }] }
   Response: { "text": "string", "toolOutputs": [{ "stdout": "...", "stderr": "...", "error": "..." }] }
 ```
 
