@@ -39,6 +39,7 @@ CHATLET_BACKEND=agno bun dev
 - `crewai`: Run `npm run dev:all` in the `crewai/` directory (starts **two** services: Flask on :5000 + proxy on :3002)
 - `langchain`: Run `npm run dev` in the `langchain/` directory (single service on port 5001)
 - `langgraph`: Run `npm run dev` in the `langgraph/` directory (single service on port 5002)
+- `liw`: Run `npm run dev:all` in the `liw/` directory (starts **two** services: Flask agent on :5000 + proxy on :5003)
 
 Each backend may need its own setup. See individual backend SPEC.md files.
 
@@ -51,7 +52,7 @@ Each backend may need its own setup. See individual backend SPEC.md files.
 | CrewAI      | ✅ Done | 3002        | `npm run dev:all` in crewai/ |
 | LangChain   | ✅ Done | 5001        | `npm run dev` in langchain/ |
 | LangGraph   | ✅ Done | 5002        | `npm run dev` in langgraph/ |
-| LIW         | ⬜      | —           |                     |
+| LIW         | ✅ Done | 5003        | `npm run dev:all` in liw/ |
 | MAF         | ⬜      | —           |                     |
 | Mastra      | ⬜      | —           |                     |
 | Pydantic    | ⬜      | —           |                     |

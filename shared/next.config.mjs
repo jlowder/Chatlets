@@ -8,6 +8,7 @@ const nextConfig = {
       'crewai': { url: 'http://localhost:5000', path: '/chat' },
       'langchain': { url: 'http://localhost:5001', path: '/api/chat' },
       'langgraph': { url: 'http://localhost:5002', path: '/api/chat' },
+      'liw': { url: 'http://localhost:5003', path: '/api/chat' },
     };
     const { url, path: destPath } = backends[backend];
     if (!url) return [];

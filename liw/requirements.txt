@@ -1,0 +1,4 @@
+llama-index-core
+llama-index-llms-openai-like
+flask
+flask-cors
