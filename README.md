@@ -1,105 +1,103 @@
 # Chatlets
 
-Side-by-side chat interface implementations across many AI frameworks, with a **shared frontend** and **backend-only framework folders**.
+A simple chat interface with tool calling, implemented ten times
+using a different backend framework each time.  This creates a level
+playing field to compare these frameworks side-by-side. 
+
+Plus you can point your coding agent at a backend to use it as a
+template, which helps it to generate working code without having to
+iterate (as much).
 
 ## Architecture
 
 ```
-                    ┌────────────────────┐
-                    │   Shared Frontend   │
-                    │  (Next.js, :3000)   │
-                    │                     │
-                    │  /api/chat          │
-                    └──┬────┬────┬────┬───┘
-                       │    │    │    │
-              CHATLET  │    │    │    │  env var
-              BACKEND  ▼    ▼    ▼    ▼
-                  vercel-ai  agno  ...  ...
-                  (:4000)   (:3001)  etc
+Browser → Shared Frontend (:3000) → Backend Service
 ```
 
-Each framework backend runs independently. The shared frontend proxies to whichever backend is selected via the `CHATLET_BACKEND` environment variable.
+The shared frontend proxies requests to whichever backend you configure via `CHATLET_BACKEND`. One API contract to rule them all (`POST /api/chat` → `{ text, toolOutputs }`), and in the darkness bind them.
+
+Two deployment patterns exist:
+
+- **Monolithic** — Single Next.js process (vercel-ai, langchain, langgraph)
+- **Split** — Flask agent service + Next.js proxy (crewai, smolagents, pydantic, maf, mastra, agno, liw)
+
+## Backends
+
+| Framework | Pattern | Port | Notes |
+|-----------|---------|------|-------|
+| Vercel AI SDK | Monolithic | 4000 | @ai-sdk/openai-compatible |
+| Agno | Split | 3001 | Flask agent + proxy |
+| CrewAI 2.x | Split | 3002 | LLM class required |
+| LangChain | Monolithic | 5001 | createReactAgent |
+| LangGraph | Monolithic | 5002 | StateGraph with routing |
+| LlamaIndex Workflows | Split | 5003 | Event-driven agent |
+| Microsoft Agent Framework | Split | 5005 | @tool decorator |
+| Mastra | Monolithic | 5007 | Direct fetch + AI SDK |
+| Pydantic AI | Split | 5009 | @agent.tool decorator |
+| Smolagents | Split | 5011 | CodeAgent / ToolCallingAgent |
 
 ## Getting Started
 
-```bash
-# Install shared frontend deps
-cd shared && bun install
+1. Install dependencies: `npm install` (root), then `cd shared && npm install` and `cd <backend> && npm install`
 
-# Start the frontend, pointing at a backend
-CHATLET_BACKEND=vercel-ai bun dev
+2. Set up config: `cp example.config.json config.json` in each backend folder. Fill in your model endpoint, API key, and model name.
 
-# Or switch backends
-CHATLET_BACKEND=agno bun dev
-```
+3. Start the backend. Monolithic backends: `cd <backend> && npm run dev`. Split backends: `cd <backend> && npm run dev:all` (starts Flask + proxy).
 
-**Important:** Before starting the shared frontend, make sure the selected backend's services are running:
-- `vercel-ai`: Run `bun dev` in the `vercel-ai/` directory (single service on port 4000)
-- `agno`: Run `npm run dev:all` in the `agno/` directory (starts **two** services: Flask on :8081 + proxy on :3001)
-- `crewai`: Run `npm run dev:all` in the `crewai/` directory (starts **two** services: Flask on :5000 + proxy on :3002)
-- `langchain`: Run `npm run dev` in the `langchain/` directory (single service on port 5001)
-- `langgraph`: Run `npm run dev` in the `langgraph/` directory (single service on port 5002)
-- `liw`: Run `npm run dev:all` in the `liw/` directory (starts **two** services: Flask agent on :5000 + proxy on :5003)
-- `maf`: Run `npm run dev:all` in the `maf/` directory (starts **two** services: Flask agent on :5004 + proxy on :5005)
+4. Start the shared frontend: `cd shared && npm run dev`.
 
-Each backend may need its own setup. See individual backend SPEC.md files.
-
-## Available Frameworks
-
-| Framework    | Status | Backend Port | How to Run          |
-|-------------|--------|-------------|---------------------|
-| Vercel AI   | ✅ Done | 4000       | `bun dev` in vercel-ai/ |
-| Agno        | ✅ Done | 3001        | `npm run dev:all` in agno/ |
-| CrewAI      | ✅ Done | 3002        | `npm run dev:all` in crewai/ |
-| LangChain   | ✅ Done | 5001        | `npm run dev` in langchain/ |
-| LangGraph   | ✅ Done | 5002        | `npm run dev` in langgraph/ |
-| LIW         | ✅ Done | 5003        | `npm run dev:all` in liw/ |
-| MAF         | ✅ Done | 5005        | `npm run dev:all` in maf/ |
-| Mastra      | ✅ Done | 5007        | `npm run dev` in mastra/  |
-| Pydantic AI | ✅ Done | 5009        | `npm run dev:all` in pydantic/ |
-| SmolAgents  | ✅ Done | 5011        | `npm run dev:all` in smolagents/ |
-
-## Adding a New Framework
-
-1. Create a folder with the same name as the framework
-2. Implement a backend that exposes a chat endpoint (see other SPEC.md files for patterns)
-3. Return `{ text: string, toolOutputs: ToolOutput[] }` from the endpoint
-4. Add an entry to `shared/config/backends.ts`
-5. Update `shared/next.config.mjs` with the proxy destination
-6. Add the framework to this README table
-
-## Shared Frontend
-
-Located in `shared/`. All frameworks share this single UI. Key components:
-
-- `components/ChatPage.tsx` — main chat interface
-- `components/ToolCard.tsx` — renders tool call outputs
-- `components/TypingIndicator.tsx` — loading dots animation
-- `types/chat.ts` — TypeScript type definitions
-- `config/backends.ts` — backend registry
-- `next.config.mjs` — dev proxy rewrites
+5. Switch backends by setting `CHATLET_BACKEND=<name>` in the shared frontend's environment.
 
 ## API Contract
 
-All backends must implement:
+All backends implement:
 
 ```
-POST /chat  (or /api/chat for Next.js backends)
-  Request:  { "messages": [{ "role": "user"|"assistant", "content": "..." }] }
-  Response: { "text": "string", "toolOutputs": [{ "stdout": "...", "stderr": "...", "error": "..." }] }
+POST /api/chat
+Body: { messages: [{ role: "user" | "assistant", content: string }] }
+Response: { text: string, toolOutputs: [{ stdout?: string, stderr?: string, error?: string }] }
 ```
 
-## config.json
+The frontend sends the full message history on every request. The backend returns either a text response or structured tool output.
 
-Each backend reads its own `config.json` for LLM settings:
+## Bash Tool
+
+Every backend includes a sandboxed bash tool. Commands are restricted to an allowlist defined in `config.json`:
 
 ```json
 {
-  "provider": "YOUR_PROVIDER",
-  "baseURL": "http://localhost:8080/v1",
-  "apiKey": "your-api-key",
-  "model": "model-name",
-  "allowList": ["ls", "pwd"],
-  "allowAll": false
+  "bash": {
+    "allowList": ["ls", "pwd"],
+    "allowAll": false
+  }
 }
 ```
+
+Feeling reckless? Go ahead and set `allowAll: true` to permit any command. Just remember that these agents... they are subtle and quick to anger.
+
+## File Layout
+
+```
+shared/           Shared Next.js frontend + proxy
+  app/            API routes (proxy)
+  components/     ChatPage, ToolCard, TypingIndicator
+  config/         Backend registry (backends.ts)
+  types/          Shared TypeScript types
+<backend>/        Each backend implementation
+  app/api/chat/   Backend API route
+  agent_service.py  Flask agent service (split backends)
+  config.json     Model + tool settings
+  example.config.json  Template with placeholder values
+  venv/            Python virtual environment
+  scripts/         Venv auto-detection scripts
+```
+
+## Compare
+
+Run two or more backends simultaneously on different ports. Switch the frontend to each one and compare:
+
+- Tool execution reliability
+- Response latency
+- Memory handling
+- Error recovery
+- Prompt adherence
