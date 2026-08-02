@@ -37,11 +37,19 @@ export default function ChatPage({ frameworkName }: { frameworkName: string }) {
     setLoading(true);
 
     try {
+      const fetchStart = Date.now();
+      console.log(`[frontend] fetch started at ${new Date().toISOString()}`);
+      
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages: prevMessages } satisfies ChatRequest),
+        signal: AbortSignal.timeout(300000),
       });
+      
+      const fetchElapsed = Date.now() - fetchStart;
+      console.log(`[frontend] response received in ${fetchElapsed}ms`);
+
       const data: ChatResponse = await res.json();
 
       if (res.ok) {

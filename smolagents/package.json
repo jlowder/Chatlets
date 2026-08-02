@@ -1,0 +1,22 @@
+{
+  "name": "smolagents",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "npx next dev -p 5011",
+    "build": "npx next build",
+    "start": "npx next start",
+    "agent": "python agent_service.py",
+    "agent:venv": "node scripts/find-python.mjs",
+    "dev:all": "concurrently --kill-others-on-fail \"npm run agent\" \"npm run dev\""
+  },
+  "dependencies": {
+    "next": "16.2.10"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "19.2.18",
+    "concurrently": "^9",
+    "typescript": "^5"
+  }
+}

@@ -57,7 +57,7 @@ Each backend may need its own setup. See individual backend SPEC.md files.
 | MAF         | ✅ Done | 5005        | `npm run dev:all` in maf/ |
 | Mastra      | ✅ Done | 5007        | `npm run dev` in mastra/  |
 | Pydantic AI | ✅ Done | 5009        | `npm run dev:all` in pydantic/ |
-| SmolAgents  | ⬜      | —           |                     |
+| SmolAgents  | ✅ Done | 5011        | `npm run dev:all` in smolagents/ |
 
 ## Adding a New Framework
 

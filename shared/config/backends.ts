@@ -16,6 +16,7 @@ export const BACKENDS: BackendDefinition[] = [
   { name: 'maf', label: 'Microsoft Agent Framework', url: 'http://localhost:5005', port: 5005, description: 'Microsoft Agent Framework with @tool decorator and session management' },
   { name: 'mastra', label: 'Mastra', url: 'http://localhost:5007', port: 5007, description: 'Mastra AI framework with Agent, Model Router, and createTool' },
   { name: 'pydantic', label: 'Pydantic AI', url: 'http://localhost:5009', port: 5009, description: 'Pydantic AI framework with type-safe agents and dependency injection' },
+  { name: 'smolagents', label: 'Smolagents', url: 'http://localhost:5011', port: 5011, description: 'smolagents CodeAgent with Python code generation paradigm and LiteLLM' },
 ];
 
 export function getBackendUrl(): string | null {
