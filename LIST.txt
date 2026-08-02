@@ -2,9 +2,9 @@
 [x] crewai
 [x] langchain
 [x] langgraph
-[x] liw
-[x] maf
+[x] liw - LlamaIndex Workflows
+[x] maf - Microsoft Agent Framework
 [x] mastra
 [x] pydantic
-[ ] smolagents
+[-] smolagents - work in progress (occasional reasoning loops)
 [x] vercel-ai
