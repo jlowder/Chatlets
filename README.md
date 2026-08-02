@@ -21,6 +21,8 @@ Two deployment patterns exist:
 - **Monolithic** — Single Next.js process (vercel-ai, langchain, langgraph)
 - **Split** — Flask agent service + Next.js proxy (crewai, smolagents, pydantic, maf, mastra, agno, liw)
 
+![Chat Interface](doc/screenshot.png)
+
 ## Backends
 
 | Framework | Pattern | Port | Notes |
