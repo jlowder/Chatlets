@@ -107,3 +107,5 @@ dmypy.json
 # Misc
 .sass-cache/
 *.log
+# Config files (contain secrets)
+config.json
