@@ -78,38 +78,40 @@ def bash_tool(command: str) -> str:
 
 def create_agent():
     cfg = load_config()
-    import os
-    os.environ["LITELLM_TIMEOUT"] = "300"
-
     model = LiteLLMModel(
         model_id=f"openai/{cfg['model']}",
         api_base=cfg["baseURL"],
         api_key=cfg["apiKey"],
+        timeout=300.0,
         extra_body={"max_tokens": 4096},
     )
-
+    
     agent = ToolCallingAgent(
         tools=[bash_tool],
         model=model,
-        max_steps=1,
+        max_steps=2,
     )
     agent.prompt_templates["system_prompt"] = (
-        "You are a helpful assistant. You have ONE tool available: 'bash' which executes shell commands.\n\n"
-        "CRITICAL RULES:\n"
-        "1. Answer questions directly from your knowledge — do NOT use the bash tool for greetings, facts, definitions, math, explanations, or general knowledge.\n"
-        "2. Only use bash when the user EXPLICITLY asks to run a command (e.g., 'run ls', 'execute pwd', 'run the command ls').\n"
-        "3. If the user says 'hi', 'hello', 'help', or asks a question — just reply directly.\n"
-        "4. Do NOT invent tools that don't exist. The only tool is 'bash' with the argument 'command' (a string).\n"
-        "5. Do NOT call bash for echo, google_search, or anything not explicitly requested.\n\n"
-        "When you DO need to use bash, call it like: bash(command='ls -la')\n"
-        "When you DON'T need a tool, just provide your answer directly."
+        "You are a helpful assistant with access to a bash tool. "
+        "Use the bash tool only when the user explicitly asks to run a command. "
+        "Use bash for: 'run ls', 'execute pwd', 'run the command ls' etc. "
+        "Answer knowledge questions directly without using tools. "
+        "Only ls and pwd commands are allowed. All other commands will be rejected."
     )
     return agent
 
 
 async def run_agent(messages: list) -> dict:
     """Run the agent and return the result."""
+    import re
+    
     agent = create_agent()
+    
+    # Reset state
+    if hasattr(agent, 'reset'):
+        agent.reset()
+    if hasattr(agent, 'memory') and hasattr(agent.memory, 'steps'):
+        agent.memory.steps.clear()
     
     # Build conversation context
     user_messages = []
@@ -117,14 +119,15 @@ async def run_agent(messages: list) -> dict:
         if m["role"] == "user":
             user_messages.append(f"User: {m['content']}")
         elif m["role"] == "assistant":
+            # Skip error messages from retries
+            if m["content"].startswith(("Error:", "Failed to", "try again", "Command 'echo'")):
+                continue
             user_messages.append(f"Assistant: {m['content']}")
     
     history = "\n".join(user_messages[:-1]) if len(user_messages) > 1 else ""
     current_prompt = user_messages[-1].replace("User: ", "") if user_messages else ""
-    
     full_prompt = f"Previous conversation:\n{history}\n\n{current_prompt}" if history else current_prompt
     
-    # Suppress trace output
     old_stdout = sys.stdout
     old_stderr = sys.stderr
     sys.stdout = io.StringIO()
@@ -136,17 +139,20 @@ async def run_agent(messages: list) -> dict:
         sys.stdout = old_stdout
         sys.stderr = old_stderr
     
-    result_str = str(result) if result is not None else ""
-    
-    # Extract tool outputs from agent.memory.steps (canonical approach)
+    # Extract tool outputs from memory steps
     tool_outputs = []
+    final_text = None
+    tool_call_count = 0
+    has_echo_fail = False
+    has_real_tool = False
+    
     try:
         steps = agent.memory.steps if hasattr(agent, 'memory') and hasattr(agent.memory, 'steps') else []
+        
         for step in steps:
-            # Skip final_answer steps
-            if hasattr(step, 'is_final_answer') and step.is_final_answer:
-                continue
+            # Extract tool outputs
             if hasattr(step, 'tool_calls') and step.tool_calls:
+                tool_call_count += 1
                 for tc in step.tool_calls:
                     tc_name = getattr(tc, 'name', '') if hasattr(tc, 'name') else ''
                     if tc_name in ('bash', 'bash_tool'):
@@ -159,58 +165,50 @@ async def run_agent(messages: list) -> dict:
                                     "stderr": parsed.get("stderr"),
                                     "error": parsed.get("error"),
                                 })
+                                if "echo" in str(tc_name) or (isinstance(parsed.get("error"), str) and "echo" in parsed.get("error")):
+                                    has_echo_fail = True
+                                elif "error" not in parsed:
+                                    has_real_tool = True
                         except (json.JSONDecodeError, TypeError):
                             pass
-        
-        # If we found tool outputs, return only those (suppress text)
-        if tool_outputs:
-            return {
-                "text": "",
-                "toolOutputs": tool_outputs,
-            }
+            
+            # Get final text from last step
+            if hasattr(step, 'model_output') and step.model_output:
+                final_text = str(step.model_output).strip()
     except Exception:
         pass
     
-    # Clean the result — strip reasoning blocks
-    import re
+    # Trigger-phrase validation: only return tool outputs if user asked for a command
+    last_user_msg = ""
+    for m in reversed(messages):
+        if m["role"] == "user":
+            last_user_msg = m["content"].lower()
+            break
     
-    def clean_result(text: str) -> str:
-        """Strip reasoning/thinking blocks from agent output."""
-        # If output has no reasoning markers, return as-is (clean response)
-        if not re.search(r'(Thought:|Observation:|Action:|Action Input:)', text, re.IGNORECASE):
-            # Strip markdown code blocks if present
-            text = re.sub(r'```python\s*.*?\s*```', '', text, flags=re.DOTALL)
-            text = re.sub(r'```\s*.*?\s*```', '', text, flags=re.DOTALL)
-            return text.strip()
-        
-        # Has reasoning — take text after the last "Observation:" or the final answer
-        obs_parts = re.split(r'Observation:', text, flags=re.IGNORECASE)
-        if len(obs_parts) > 1:
-            text = obs_parts[-1].strip()
-        
-        # Now remove any remaining Thought: blocks
-        parts = re.split(r'Thought:.*?(?=(Observation|Action:|$))', text, flags=re.IGNORECASE | re.DOTALL)
-        text = parts[-1] if parts else text
-        
-        # Strip any code blocks
-        text = re.sub(r'```python\s*.*?\s*```', '', text, flags=re.DOTALL)
-        text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
-        
-        return text.strip()
+    has_command_trigger = any(phrase in last_user_msg for phrase in [
+        "run ", "execute ", "run the command", "run ls", "run pwd", "run '", "run \"", "run:"])
     
-    result_str = clean_result(result_str)
+    # If no command trigger, ignore tool outputs and return text answer
+    if not has_command_trigger or (has_echo_fail and not has_real_tool):
+        tool_outputs = []
+        if final_text and len(final_text) > 0:
+            if len(final_text) > 500:
+                final_text = final_text[:500].rsplit(' ', 1)[0] + '...'
+            return {"text": final_text, "toolOutputs": []}
     
-    # Safety: truncate to 500 chars to prevent runaway output
-    if len(result_str) > 500:
-        result_str = result_str[:500].rsplit(' ', 1)[0] + '...'
+    # Tool outputs take priority (if we got here, user asked for a command)
+    if tool_outputs:
+        return {"text": "", "toolOutputs": tool_outputs}
     
-    if not result_str:
-        result_str = "I couldn't process that request."
+    # Fallback: clean raw result
+    answer = str(result) if result is not None else ""
+    answer = re.sub(r'Thought:.*?(?=(Observation|Action:|$))', '', answer, flags=re.IGNORECASE | re.DOTALL).strip()
+    answer = re.sub(r'```python\s*.*?\s*```', '', answer, flags=re.DOTALL).strip()
+    answer = re.sub(r'```.*?```', '', answer, flags=re.DOTALL).strip()
     
-    return {
-        "text": result_str,
-        "toolOutputs": [],
-    }
+    return {"text": answer if answer else "I couldn't process that request.", "toolOutputs": []}
+
+
 
 
 @app.route("/health")

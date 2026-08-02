@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import ToolCard from "./ToolCard";
 import TypingIndicator from "./TypingIndicator";
 import type { ChatRequest, ChatResponse, ToolOutput } from "@/types/chat";
@@ -127,7 +129,13 @@ export default function ChatPage({ frameworkName }: { frameworkName: string }) {
                     msg.role === "user" ? userBubble : assistantBubble
                   }`}
                 >
-                  {msg.content}
+                  {msg.role === "assistant" ? (
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {msg.content}
+                    </ReactMarkdown>
+                  ) : (
+                    msg.content
+                  )}
                 </div>
                 {msg.toolOutputs && msg.toolOutputs.length > 0 && (
                   <div className={`mt-2 space-y-2 ${msg.role === "user" ? "max-w-[85%] ml-auto" : ""}`}>
