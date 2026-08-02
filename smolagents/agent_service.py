@@ -12,11 +12,16 @@ import json
 import subprocess
 import asyncio
 import sys
+import os
 import io
 import time
 from pathlib import Path
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+
+# Add parent directory to path for shared config loader
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+from shared.config_loader import load_chatlets_config, get_bash_commands_prompt
 
 # Smolagents imports
 from smolagents import ToolCallingAgent, LiteLLMModel, tool
@@ -91,8 +96,11 @@ def create_agent():
         model=model,
         max_steps=2,
     )
+    # Build dynamic bash instructions from shared config
+    config = load_chatlets_config()
+    bash_prompt = get_bash_commands_prompt(config)
     agent.prompt_templates["system_prompt"] = (
-        "You are a helpful assistant with access to a bash tool. "
+        f"You are a helpful assistant. {bash_prompt} "
         "Use the bash tool only when the user explicitly asks to run a command. "
         "Use bash for: 'run ls', 'execute pwd', 'run the command ls' etc. "
         "Answer knowledge questions directly without using tools. "

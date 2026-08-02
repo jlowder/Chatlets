@@ -1,10 +1,15 @@
 import os
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import List, Dict, Any
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+
+# Add parent directory to path for shared config loader
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+from shared.config_loader import load_chatlets_config, get_bash_commands_prompt
 
 # LlamaIndex imports
 from llama_index.core.workflow import Workflow, StartEvent, StopEvent, step
@@ -99,10 +104,12 @@ class LlamaIndexWorkflow(Workflow):
         prompt = messages[-1]["content"] if messages else ""
         history = messages[:-1]
 
-        # Build system message — no tool mention since tools aren't bound to this model
+        # Build system message with dynamic bash instructions from shared config
+        config = load_chatlets_config()
+        bash_prompt = get_bash_commands_prompt(config)
         system_msg = ChatMessage(
             role="system",
-            content="You are a helpful assistant. Answer questions directly from your knowledge whenever possible."
+            content=f"You are a helpful assistant. {bash_prompt} Answer questions directly from your knowledge whenever possible."
         )
 
         # Build history messages

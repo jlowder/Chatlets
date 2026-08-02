@@ -4,6 +4,7 @@ import { generateText, tool } from 'ai';
 import { z } from 'zod';
 import { promises as fs } from 'fs';
 import { execAsync } from '../../../lib/execAsync';
+import { loadChatletsConfig, getBashCommandsPrompt } from '../../../shared/config-loader';
 
 /**
  * Reads the LLM configuration from config.json.
@@ -76,7 +77,9 @@ export async function POST(request: Request) {
     });
     const model = provider(cfg.model, { maxRetries: 0 });
 
-    const instructions = `You are a helpful assistant. Answer questions directly from your knowledge whenever possible. Only use the bash tool when the user explicitly requests a shell command (e.g., "run ls", "execute the script", "check disk space"). Do NOT use bash for: general knowledge questions, math, definitions, explanations, or factual queries. The user does not want command-line access unless they specifically ask for it.`;
+    const config = loadChatletsConfig();
+    const bashPrompt = getBashCommandsPrompt(config);
+    const instructions = `You are a helpful assistant. ${bashPrompt} Answer questions directly from your knowledge whenever possible. Only use the bash tool when the user explicitly requests a shell command. Do NOT use bash for: general knowledge questions, math, definitions, explanations, or factual queries. The user does not want command-line access unless they specifically ask for it.`;
 
     const result = await generateText({
       model,

@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { exec } from 'child_process';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
+import { loadChatletsConfig, getBashCommandsPrompt } from '../../../shared/config-loader';
 
 const execAsync = (command: string, timeout = 30000): Promise<{ stdout: string; stderr: string }> => {
   return new Promise((resolve, reject) => {
@@ -85,15 +86,16 @@ export async function POST(request: Request) {
     });
 
     // Create agent with memory
+    const config = loadChatletsConfig();
+    const bashPrompt = getBashCommandsPrompt(config);
+    const systemPrompt = `You are a helpful assistant. ${bashPrompt} Answer questions directly from your knowledge whenever possible. Only use the bash tool when the user explicitly requests a shell command. Do NOT use bash for: general knowledge questions, math, definitions, explanations, or factual queries. The user does not want command-line access unless they specifically ask for it.`;
     const bashTool = new BashTool();
     const memory = new MemorySaver();
     const agent = createReactAgent({
       llm: model,
       tools: [bashTool],
       checkpointSaver: memory,
-      messagesModifier: new SystemMessage(
-        `You are a helpful assistant. Answer questions directly from your knowledge whenever possible. Only use the bash tool when the user explicitly requests a shell command (e.g., "run ls", "execute the script", "check disk space"). Do NOT use bash for: general knowledge questions, math, definitions, explanations, or factual queries. The user does not want command-line access unless they specifically ask for it.`,
-      ),
+      messagesModifier: new SystemMessage(systemPrompt),
     });
 
     // Convert messages to LangChain message types

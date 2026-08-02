@@ -2,6 +2,7 @@ import os
 import json
 import subprocess
 import asyncio
+import sys
 from pathlib import Path
 from typing import Annotated
 from flask import Flask, request, jsonify
@@ -9,6 +10,10 @@ from flask_cors import CORS
 from pydantic import Field
 from agent_framework import Agent, FunctionInvocationContext, tool
 from agent_framework.openai import OpenAIChatClient
+
+# Add parent directory to path for shared config loader
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+from shared.config_loader import load_chatlets_config, get_bash_commands_prompt
 
 app = Flask(__name__)
 CORS(app)
@@ -85,14 +90,14 @@ async def run_agent(messages: list) -> dict:
         model=cfg["model"],
     )
 
+    # Build dynamic bash instructions from shared config
+    config = load_chatlets_config()
+    bash_prompt = get_bash_commands_prompt(config)
+
     # Create agent with tools
     agent = client.as_agent(
         name="ChatletAgent",
-        instructions=(
-            "You are a helpful assistant. Answer questions directly from your knowledge whenever possible. "
-            "Only use the bash tool when the user explicitly requests a shell command. "
-            "Do NOT use bash for general knowledge questions, math, definitions, explanations, or factual queries."
-        ),
+        instructions=f"You are a helpful assistant. {bash_prompt} Answer questions directly from your knowledge whenever possible. Do NOT use bash for general knowledge questions, math, definitions, explanations, or factual queries.",
         tools=[bash],
     )
 

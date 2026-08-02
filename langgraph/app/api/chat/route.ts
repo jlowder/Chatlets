@@ -9,6 +9,7 @@ import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { HumanMessage, AIMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
+import { loadChatletsConfig, getBashCommandsPrompt } from '../../../shared/config-loader';
 
 const execAsync = (command: string, timeout = 30000): Promise<{ stdout: string; stderr: string }> => {
   return new Promise((resolve, reject) => {
@@ -78,8 +79,10 @@ async function modelNode(state: typeof MessagesAnnotation.State) {
     maxRetries: 0,
   }).bindTools([bashTool]);
 
+  const config = loadChatletsConfig();
+  const bashPrompt = getBashCommandsPrompt(config);
   const systemMessage = new HumanMessage(
-    'You are a helpful assistant. Answer questions directly from your knowledge whenever possible. Only use the bash tool when the user explicitly requests a shell command. Do NOT use bash for general knowledge questions, math, definitions, explanations, or factual queries.'
+    `You are a helpful assistant. ${bashPrompt} Answer questions directly from your knowledge whenever possible. Only use the bash tool when the user explicitly requests a shell command. Do NOT use bash for general knowledge questions, math, definitions, explanations, or factual queries.`
   );
 
   const response = await model.invoke([systemMessage, ...state.messages]);

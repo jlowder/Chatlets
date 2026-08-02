@@ -11,8 +11,13 @@ Runs on http://localhost:8081
 import json
 import subprocess
 import os
+import sys
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+
+# Add parent directory to path for shared config loader
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+from shared.config_loader import load_chatlets_config, get_bash_commands_prompt
 
 # Try importing agno, fall back gracefully
 try:
@@ -94,11 +99,15 @@ def create_agent():
         base_url=cfg.get("baseURL", "http://localhost:8080/v1"),
     )
 
+    # Build dynamic bash instructions from shared config
+    config = load_chatlets_config()
+    bash_prompt = get_bash_commands_prompt(config)
+    
     agent = Agent(
         name="chat-agent",
         model=model,
         tools=[bash_tool],
-        instructions="""You are a helpful assistant. You have access to a bash tool that can execute shell commands.
+        instructions=f"""You are a helpful assistant. {bash_prompt}
 
     IMPORTANT RULES:
     - Answer questions directly from your knowledge whenever possible

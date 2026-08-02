@@ -11,9 +11,15 @@ Runs on http://localhost:5008
 import json
 import subprocess
 import asyncio
+import sys
+import os
 from pathlib import Path
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+
+# Add parent directory to path for shared config loader
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+from shared.config_loader import load_chatlets_config, get_bash_commands_prompt
 
 # Pydantic AI imports
 from pydantic_ai import Agent, RunContext
@@ -76,11 +82,15 @@ def create_agent():
         ),
     )
 
+    # Build dynamic bash instructions from shared config
+    config = load_chatlets_config()
+    bash_prompt = get_bash_commands_prompt(config)
+
     agent = Agent[ChatDeps, str](
         model,
         deps_type=ChatDeps,
         system_prompt=(
-            "You are a helpful assistant. Answer questions directly from your knowledge whenever possible. "
+            f"You are a helpful assistant. {bash_prompt} "
             "The ONLY tool available is 'bash' for executing shell commands. "
             "Do NOT call 'bash' for general knowledge questions, math, definitions, explanations, or factual queries. "
             "Do NOT invent or call tools that are not available (e.g., google_search, web_search, etc.). "

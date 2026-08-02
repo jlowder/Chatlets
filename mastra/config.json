@@ -1,8 +1,0 @@
-{
-  "provider": "openai",
-  "baseURL": "http://localhost:8080/v1",
-  "apiKey": "omlx-om5hh4rsln2h3f8w",
-  "model": "Qwen3.6-35B-A3B-MLX-8bit",
-  "allowList": ["ls", "pwd"],
-  "allowAll": false
-}

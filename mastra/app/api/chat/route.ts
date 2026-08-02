@@ -3,6 +3,7 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { loadChatletsConfig, getBashCommandsPrompt } from '../../../shared/config-loader';
 
 const execAsync = promisify(exec);
 const CONFIG_PATH = join(process.cwd(), 'config.json');
@@ -46,7 +47,7 @@ async function chatWithLLM(messages: any[], cfg: any) {
       messages: [
         {
           role: 'system',
-          content: 'You are a helpful assistant. Answer questions directly from your knowledge whenever possible. Only use the bash tool when the user explicitly requests a shell command. Do NOT use bash for general knowledge questions, math, definitions, explanations, or factual queries.',
+          content: `You are a helpful assistant. ${getBashCommandsPrompt(loadChatletsConfig())} Answer questions directly from your knowledge whenever possible. Only use the bash tool when the user explicitly requests a shell command. Do NOT use bash for general knowledge questions, math, definitions, explanations, or factual queries.`,
         },
         ...messages,
       ],

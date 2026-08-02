@@ -11,8 +11,13 @@ Runs on http://localhost:5000
 import json
 import subprocess
 import os
+import sys
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+
+# Add parent directory to path for shared config loader
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+from shared.config_loader import load_chatlets_config, get_bash_commands_prompt
 
 # Try importing crewai, fall back gracefully
 try:
@@ -120,12 +125,23 @@ def create_agent():
     # Create the bash tool
     bash_tool = BashTool()
     
+    # Build dynamic bash instructions from shared config
+    config = load_chatlets_config()
+    bash_prompt = get_bash_commands_prompt(config)
+    allow_all = config.get("allowAll", False)
+    allow_list = config.get("allowList", [])
+    if allow_all:
+        goal = "Answer user questions directly using your knowledge. Use the bash tool to run any shell command when needed."
+    else:
+        command_list = ", ".join(allow_list) if allow_list else "none"
+        goal = f"Answer user questions directly using your knowledge. Only use the bash tool to run these commands: {command_list}."
+    
     # Create the agent with the LLM instance
     agent = Agent(
         role="Assistant",
-        goal="Answer user questions directly using your knowledge. ONLY use the bash tool when the user explicitly asks to run a command, check system info, or read/write files.",
-        backstory="""You are a helpful assistant. You have access to a bash tool that can execute shell commands.
-    
+        goal=goal,
+        backstory=f"""You are a helpful assistant. {bash_prompt}
+
     IMPORTANT RULES:
     - Answer questions directly from your knowledge whenever possible
     - ONLY use bash tool when: the user explicitly asks to run a command, check system status, list files, read files, or perform a computation
