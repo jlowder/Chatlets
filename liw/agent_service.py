@@ -24,14 +24,12 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-CONFIG_PATH = Path(__file__).parent / "config.json"
 AGENT_PORT = int(os.environ.get("AGENT_PORT", 5004))
 
 
 def load_config() -> dict:
-    """Load LLM and tool configuration from config.json."""
-    with open(CONFIG_PATH) as f:
-        return json.load(f)
+    """Load LLM and tool configuration using the shared loader."""
+    return load_chatlets_config()
 
 
 class BashTool:
@@ -298,5 +296,4 @@ def chat():
 
 if __name__ == "__main__":
     print(f"Starting LlamaIndex Workflow Agent Service on http://localhost:{AGENT_PORT}")
-    print(f"Config: {CONFIG_PATH}")
     app.run(host="0.0.0.0", port=AGENT_PORT)
