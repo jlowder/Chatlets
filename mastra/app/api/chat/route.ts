@@ -5,17 +5,9 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { z } from 'zod';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import { promises as fsPromises } from 'node:fs';
-import { join } from 'node:path';
 import { loadChatletsConfig, getBashCommandsPrompt } from '../../../../shared/config-loader';
 
 const execAsync = promisify(exec);
-const CONFIG_PATH = join(process.cwd(), 'config.json');
-
-async function loadConfig() {
-  const raw = await fsPromises.readFile(CONFIG_PATH, 'utf-8');
-  return JSON.parse(raw);
-}
 
 const bashTool = createTool({
   id: 'bash',
@@ -24,7 +16,7 @@ const bashTool = createTool({
     command: z.string().describe('The bash/shell command to execute'),
   }),
   execute: async ({ command }) => {
-    const cfg = await loadConfig();
+    const cfg = loadChatletsConfig();
     const cmd = command.trim();
     const cmdName = cmd.split(/\s+/)[0] || '';
 
@@ -66,14 +58,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No input provided' }, { status: 400 });
     }
 
-    const cfg = await loadConfig();
+    const cfg = loadChatletsConfig();
     const openai = createOpenAI({
       apiKey: cfg.apiKey,
       baseURL: cfg.baseURL,
     });
 
-    const config = loadChatletsConfig();
-    const bashPrompt = getBashCommandsPrompt(config);
+    const bashPrompt = getBashCommandsPrompt(cfg);
     const instructions = `You are a helpful assistant. ${bashPrompt} Answer questions directly from your knowledge whenever possible. Only use the bash tool when the user explicitly requests a shell command. Do NOT use bash for: general knowledge questions, math, definitions, explanations, or factual queries.`;
 
     const agent = new Agent({
