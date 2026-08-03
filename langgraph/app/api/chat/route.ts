@@ -2,14 +2,13 @@ import { NextResponse } from 'next/server';
 import { ChatOpenAI } from '@langchain/openai';
 import { MessagesAnnotation, StateGraph } from '@langchain/langgraph';
 import { ToolMessage } from '@langchain/core/messages';
-import { Tool } from '@langchain/core/tools';
+import { StructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { exec } from 'child_process';
-import { readFile } from 'fs/promises';
-import { join } from 'path';
+import { createHash } from 'crypto';
 import { HumanMessage, AIMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
-import { loadChatletsConfig, getBashCommandsPrompt } from '../../../shared/config-loader';
+import { loadChatletsConfig, getBashCommandsPrompt } from '../../../../shared/config-loader';
 
 const execAsync = (command: string, timeout = 30000): Promise<{ stdout: string; stderr: string }> => {
   return new Promise((resolve, reject) => {
@@ -27,27 +26,13 @@ const execAsync = (command: string, timeout = 30000): Promise<{ stdout: string; 
   });
 };
 
-interface LLMConfig {
-  baseURL: string;
-  apiKey: string;
-  model: string;
-  allowList?: string[];
-  allowAll?: boolean;
-}
-
-async function loadConfig(): Promise<LLMConfig> {
-  const configPath = join(process.cwd(), 'config.json');
-  const raw = await readFile(configPath, 'utf-8');
-  return JSON.parse(raw);
-}
-
-class BashTool extends Tool {
+class BashTool extends StructuredTool {
   name = 'bash';
   description = 'Execute a shell command. Only use for explicit command requests, NOT for general knowledge, math, definitions, or factual queries.';
   schema = z.object({ command: z.string().describe('The shell command to execute') });
 
   async _call(input: { command: string }): Promise<string> {
-    const cfg = await loadConfig();
+    const cfg = loadChatletsConfig();
     const cmd = input.command.trim();
     const cmdName = cmd.split(/\s+/)[0];
 
@@ -69,7 +54,7 @@ class BashTool extends Tool {
 const bashTool = new BashTool();
 
 async function modelNode(state: typeof MessagesAnnotation.State) {
-  const cfg = await loadConfig();
+  const cfg = loadChatletsConfig();
   const model = new ChatOpenAI({
     model: cfg.model,
     apiKey: cfg.apiKey,
@@ -79,8 +64,7 @@ async function modelNode(state: typeof MessagesAnnotation.State) {
     maxRetries: 0,
   }).bindTools([bashTool]);
 
-  const config = loadChatletsConfig();
-  const bashPrompt = getBashCommandsPrompt(config);
+  const bashPrompt = getBashCommandsPrompt(cfg);
   const systemMessage = new HumanMessage(
     `You are a helpful assistant. ${bashPrompt} Answer questions directly from your knowledge whenever possible. Only use the bash tool when the user explicitly requests a shell command. Do NOT use bash for general knowledge questions, math, definitions, explanations, or factual queries.`
   );
@@ -100,7 +84,7 @@ async function toolsNode(state: typeof MessagesAnnotation.State) {
         new ToolMessage({
           content: result,
           name: toolCall.name,
-          tool_call_id: toolCall.id,
+          tool_call_id: toolCall.id ?? '',
         })
       );
     }
@@ -128,12 +112,20 @@ const graph = new StateGraph(MessagesAnnotation)
   })
   .addEdge('tools', 'model')
   .compile({
-    checkpointSaver: new MemorySaver(),
+    checkpointer: new MemorySaver(),
   });
+
+function getThreadId(messages: any[]): string {
+  if (!messages || messages.length === 0) {
+    return crypto.randomUUID();
+  }
+  const firstMessageContent = messages[0]?.content || '';
+  return createHash('sha256').update(firstMessageContent).digest('hex');
+}
 
 export async function POST(request: Request) {
   try {
-    const cfg = await loadConfig();
+    const cfg = loadChatletsConfig();
     const body = await request.json();
 
     // Support both new messages format and legacy prompt format
@@ -151,21 +143,39 @@ export async function POST(request: Request) {
       }
     }
 
-    // Invoke graph with history
-    const result = await graph.invoke({
-      messages: [...langchainMessages, new HumanMessage(prompt)],
-    }, {
-      configurable: { thread_id: crypto.randomUUID() },
-    });
+    const threadId = getThreadId(messages);
+    const threadConfig = { configurable: { thread_id: threadId } };
 
-    // Extract final text from last AI message
+    // Check if the current thread checkpointer is empty but we have incoming history
+    const state = await graph.getState(threadConfig);
+    const hasState = state.values && state.values.messages && state.values.messages.length > 0;
+
+    if (!hasState && langchainMessages.length > 0) {
+      await graph.updateState(threadConfig, {
+        messages: langchainMessages,
+      });
+    }
+
+    // Get the message count before invoking
+    const stateBefore = await graph.getState(threadConfig);
+    const beforeMsgCount = stateBefore.values?.messages?.length ?? 0;
+
+    // Invoke graph with only the latest user prompt to leverage native session memory
+    const result = await graph.invoke({
+      messages: [new HumanMessage(prompt)],
+    }, threadConfig);
+
+    // Extract new messages generated in this invocation
     const outputMessages = result.messages;
-    const lastMsg = outputMessages[outputMessages.length - 1];
+    const newMessages = outputMessages.slice(beforeMsgCount);
+
+    // Extract final text from last AI message of the current run
+    const lastMsg = newMessages[newMessages.length - 1] || outputMessages[outputMessages.length - 1];
     const text = typeof lastMsg.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg.content);
 
-    // Build tool outputs from ToolMessage entries
+    // Build tool outputs from ToolMessage entries in this invocation only
     const toolOutputs: Array<{ stdout?: string; stderr?: string; error?: string }> = [];
-    for (const m of outputMessages) {
+    for (const m of newMessages) {
       if (m instanceof ToolMessage) {
         const parsed = typeof m.content === 'string' ? JSON.parse(m.content) : m.content;
         toolOutputs.push({

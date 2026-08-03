@@ -3,12 +3,11 @@ import { ChatOpenAI } from '@langchain/openai';
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { MemorySaver } from '@langchain/langgraph';
 import { HumanMessage, AIMessage, ToolMessage, SystemMessage } from '@langchain/core/messages';
-import { Tool } from '@langchain/core/tools';
+import { StructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { exec } from 'child_process';
-import { readFile } from 'fs/promises';
-import { join } from 'path';
-import { loadChatletsConfig, getBashCommandsPrompt } from '../../../shared/config-loader';
+import { createHash } from 'crypto';
+import { loadChatletsConfig, getBashCommandsPrompt } from '../../../../shared/config-loader';
 
 const execAsync = (command: string, timeout = 30000): Promise<{ stdout: string; stderr: string }> => {
   return new Promise((resolve, reject) => {
@@ -26,27 +25,13 @@ const execAsync = (command: string, timeout = 30000): Promise<{ stdout: string; 
   });
 };
 
-interface LLMConfig {
-  baseURL: string;
-  apiKey: string;
-  model: string;
-  allowList?: string[];
-  allowAll?: boolean;
-}
-
-async function loadConfig(): Promise<LLMConfig> {
-  const configPath = join(process.cwd(), 'config.json');
-  const raw = await readFile(configPath, 'utf-8');
-  return JSON.parse(raw);
-}
-
-class BashTool extends Tool {
+class BashTool extends StructuredTool {
   name = 'bash';
   description = 'Execute a shell command. Only use for explicit command requests (e.g., "run ls"), NOT for general knowledge, math, definitions, or factual queries.';
   schema = z.object({ command: z.string().describe('The shell command to execute') });
 
   async _call(input: { command: string }): Promise<string> {
-    const cfg = await loadConfig();
+    const cfg = loadChatletsConfig();
     const cmd = input.command.trim();
     const cmdName = cmd.split(/\s+/)[0];
 
@@ -65,9 +50,19 @@ class BashTool extends Tool {
   }
 }
 
+const memory = new MemorySaver();
+
+function getThreadId(messages: any[]): string {
+  if (!messages || messages.length === 0) {
+    return crypto.randomUUID();
+  }
+  const firstMessageContent = messages[0]?.content || '';
+  return createHash('sha256').update(firstMessageContent).digest('hex');
+}
+
 export async function POST(request: Request) {
   try {
-    const cfg = await loadConfig();
+    const cfg = loadChatletsConfig();
     const body = await request.json();
 
     // Support both new messages format and legacy prompt format
@@ -86,16 +81,14 @@ export async function POST(request: Request) {
     });
 
     // Create agent with memory
-    const config = loadChatletsConfig();
-    const bashPrompt = getBashCommandsPrompt(config);
+    const bashPrompt = getBashCommandsPrompt(cfg);
     const systemPrompt = `You are a helpful assistant. ${bashPrompt} Answer questions directly from your knowledge whenever possible. Only use the bash tool when the user explicitly requests a shell command. Do NOT use bash for: general knowledge questions, math, definitions, explanations, or factual queries. The user does not want command-line access unless they specifically ask for it.`;
     const bashTool = new BashTool();
-    const memory = new MemorySaver();
     const agent = createReactAgent({
       llm: model,
       tools: [bashTool],
       checkpointSaver: memory,
-      messagesModifier: new SystemMessage(systemPrompt),
+      messageModifier: new SystemMessage(systemPrompt),
     });
 
     // Convert messages to LangChain message types
@@ -108,25 +101,39 @@ export async function POST(request: Request) {
       }
     }
 
-    // Generate a unique thread_id per request so MemorySaver doesn't accumulate outputs
-    const threadId = crypto.randomUUID();
+    const threadId = getThreadId(messages);
+    const threadConfig = { configurable: { thread_id: threadId } };
 
-    // Invoke agent with history
+    // Check if the current thread checkpointer is empty but we have incoming history
+    const state = await agent.getState(threadConfig);
+    const hasState = state.values && state.values.messages && state.values.messages.length > 0;
+
+    if (!hasState && langchainMessages.length > 0) {
+      await agent.updateState(threadConfig, {
+        messages: langchainMessages,
+      });
+    }
+
+    // Get the message count before invoking
+    const stateBefore = await agent.getState(threadConfig);
+    const beforeMsgCount = stateBefore.values?.messages?.length ?? 0;
+
+    // Invoke agent with only the latest user prompt to leverage native session memory
     const result = await agent.invoke({
-      messages: [...langchainMessages, new HumanMessage(prompt)],
-    }, {
-      configurable: { thread_id: threadId },
-    });
+      messages: [new HumanMessage(prompt)],
+    }, threadConfig);
 
-    // Extract final text from last AI message
+    // Extract new messages generated in this invocation
     const outputMessages = result.messages;
-    const lastMsg = outputMessages[outputMessages.length - 1];
+    const newMessages = outputMessages.slice(beforeMsgCount);
+
+    // Extract final text from last AI message of the current run
+    const lastMsg = newMessages[newMessages.length - 1] || outputMessages[outputMessages.length - 1];
     const text = typeof lastMsg.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg.content);
 
     // Build tool outputs from ToolMessage entries in this invocation only
-    // (unique thread_id prevents accumulation from prior requests)
     const toolOutputs: Array<{ stdout?: string; stderr?: string; error?: string }> = [];
-    for (const m of outputMessages) {
+    for (const m of newMessages) {
       if (m instanceof ToolMessage) {
         const parsed = typeof m.content === 'string' ? JSON.parse(m.content) : m.content;
         toolOutputs.push({
