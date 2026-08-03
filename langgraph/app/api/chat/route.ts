@@ -5,8 +5,7 @@ import { ToolMessage } from '@langchain/core/messages';
 import { StructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { exec } from 'child_process';
-import { readFile } from 'fs/promises';
-import { join } from 'path';
+import { createHash } from 'crypto';
 import { HumanMessage, AIMessage } from '@langchain/core/messages';
 import { MemorySaver } from '@langchain/langgraph';
 import { loadChatletsConfig, getBashCommandsPrompt } from '../../../../shared/config-loader';
@@ -27,27 +26,13 @@ const execAsync = (command: string, timeout = 30000): Promise<{ stdout: string; 
   });
 };
 
-interface LLMConfig {
-  baseURL: string;
-  apiKey: string;
-  model: string;
-  allowList?: string[];
-  allowAll?: boolean;
-}
-
-async function loadConfig(): Promise<LLMConfig> {
-  const configPath = join(process.cwd(), 'config.json');
-  const raw = await readFile(configPath, 'utf-8');
-  return JSON.parse(raw);
-}
-
 class BashTool extends StructuredTool {
   name = 'bash';
   description = 'Execute a shell command. Only use for explicit command requests, NOT for general knowledge, math, definitions, or factual queries.';
   schema = z.object({ command: z.string().describe('The shell command to execute') });
 
   async _call(input: { command: string }): Promise<string> {
-    const cfg = await loadConfig();
+    const cfg = loadChatletsConfig();
     const cmd = input.command.trim();
     const cmdName = cmd.split(/\s+/)[0];
 
@@ -69,7 +54,7 @@ class BashTool extends StructuredTool {
 const bashTool = new BashTool();
 
 async function modelNode(state: typeof MessagesAnnotation.State) {
-  const cfg = await loadConfig();
+  const cfg = loadChatletsConfig();
   const model = new ChatOpenAI({
     model: cfg.model,
     apiKey: cfg.apiKey,
@@ -79,8 +64,7 @@ async function modelNode(state: typeof MessagesAnnotation.State) {
     maxRetries: 0,
   }).bindTools([bashTool]);
 
-  const config = loadChatletsConfig();
-  const bashPrompt = getBashCommandsPrompt(config);
+  const bashPrompt = getBashCommandsPrompt(cfg);
   const systemMessage = new HumanMessage(
     `You are a helpful assistant. ${bashPrompt} Answer questions directly from your knowledge whenever possible. Only use the bash tool when the user explicitly requests a shell command. Do NOT use bash for general knowledge questions, math, definitions, explanations, or factual queries.`
   );
@@ -131,22 +115,23 @@ const graph = new StateGraph(MessagesAnnotation)
     checkpointer: new MemorySaver(),
   });
 
-let currentThreadId = crypto.randomUUID();
+function getThreadId(messages: any[]): string {
+  if (!messages || messages.length === 0) {
+    return crypto.randomUUID();
+  }
+  const firstMessageContent = messages[0]?.content || '';
+  return createHash('sha256').update(firstMessageContent).digest('hex');
+}
 
 export async function POST(request: Request) {
   try {
-    const cfg = await loadConfig();
+    const cfg = loadChatletsConfig();
     const body = await request.json();
 
     // Support both new messages format and legacy prompt format
     const messages = body.messages || [{ role: 'user' as const, content: body.prompt }];
     const prompt = messages[messages.length - 1]?.content;
     const historyMessages = messages.slice(0, -1);
-
-    // If history is empty, treat as a brand new conversation
-    if (historyMessages.length === 0) {
-      currentThreadId = crypto.randomUUID();
-    }
 
     // Convert messages to LangChain message types
     const langchainMessages: (HumanMessage | AIMessage)[] = [];
@@ -158,7 +143,8 @@ export async function POST(request: Request) {
       }
     }
 
-    const threadConfig = { configurable: { thread_id: currentThreadId } };
+    const threadId = getThreadId(messages);
+    const threadConfig = { configurable: { thread_id: threadId } };
 
     // Check if the current thread checkpointer is empty but we have incoming history
     const state = await graph.getState(threadConfig);
