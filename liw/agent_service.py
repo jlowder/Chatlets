@@ -2,32 +2,34 @@ import os
 import json
 import subprocess
 import sys
+import asyncio
 from pathlib import Path
-from typing import List, Dict, Any
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+from typing import List, Dict, Any, Union
 
 # Add parent directory to path for shared config loader
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 from shared.config_loader import load_chatlets_config, get_bash_commands_prompt
 
 # LlamaIndex imports
-from llama_index.core.workflow import Workflow, StartEvent, StopEvent, step
+from llama_index.core.workflow import Workflow, StartEvent, StopEvent, step, Context, Event
 from llama_index.core.llms import ChatMessage
+from llama_index.core.llms.llm import ToolSelection
+from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.llms.openai_like import OpenAILike
 from llama_index.core.tools import FunctionTool
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)
 
-CONFIG_PATH = Path(__file__).parent / "config.json"
 AGENT_PORT = int(os.environ.get("AGENT_PORT", 5004))
 
 
 def load_config() -> dict:
-    """Load LLM and tool configuration from config.json."""
-    with open(CONFIG_PATH) as f:
-        return json.load(f)
+    """Load LLM and tool configuration using the shared loader."""
+    return load_chatlets_config()
 
 
 class BashTool:
@@ -83,28 +85,49 @@ bash_tool = FunctionTool.from_defaults(
 )
 
 
-class InputEvent(StartEvent):
-    """Custom event for user input."""
-    messages: List[Dict[str, str]]
+class InputEvent(Event):
+    """Event carrying chat history for LLM processing."""
+    input: List[ChatMessage]
 
 
-class ToolCallEvent(StartEvent):
-    """Custom event for tool call results."""
-    tool_result: str
-    command: str
+class ToolCallEvent(Event):
+    """Event carrying tool calls to be executed."""
+    tool_calls: List[ToolSelection]
+
+
+class StreamEvent(Event):
+    """Event for streaming response deltas."""
+    delta: str
 
 
 class LlamaIndexWorkflow(Workflow):
     """LlamaIndex Workflow-based agent with event-driven flow."""
 
-    @step
-    async def handle_llm_input(self, ev: StartEvent) -> StopEvent:
-        """Main step: prepare message history and get LLM response."""
-        messages = ev.messages if hasattr(ev, 'messages') else []
-        prompt = messages[-1]["content"] if messages else ""
-        history = messages[:-1]
+    def __init__(self, *args, llm=None, tools=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.llm = llm
+        self.tools = tools or []
 
-        # Build system message with dynamic bash instructions from shared config
+    @step
+    async def prepare_chat_history(self, ctx: Context, ev: StartEvent) -> InputEvent:
+        """Entry point: initialize memory and build chat history."""
+        messages = getattr(ev, "messages", [])
+
+        memory = await ctx.store.get("memory", default=None)
+        if not memory:
+            memory = ChatMemoryBuffer.from_defaults(llm=self.llm)
+            for m in messages:
+                role = m.get("role", "user")
+                content = m.get("content", "")
+                memory.put(ChatMessage(role=role, content=content))
+            await ctx.store.set("memory", memory)
+
+        chat_history = memory.get()
+        return InputEvent(input=chat_history)
+
+    @step
+    async def handle_llm_input(self, ctx: Context, ev: InputEvent) -> Union[ToolCallEvent, StopEvent]:
+        """Call LLM with chat history + tools. Returns ToolCallEvent or StopEvent."""
         config = load_chatlets_config()
         bash_prompt = get_bash_commands_prompt(config)
         system_msg = ChatMessage(
@@ -112,47 +135,136 @@ class LlamaIndexWorkflow(Workflow):
             content=f"You are a helpful assistant. {bash_prompt} Answer questions directly from your knowledge whenever possible."
         )
 
-        # Build history messages
-        user_messages = []
-        for m in history:
-            if m["role"] == "user":
-                user_messages.append(ChatMessage(role="user", content=m["content"]))
-            elif m["role"] == "assistant":
-                user_messages.append(ChatMessage(role="assistant", content=m["content"]))
+        chat_history = [system_msg] + ev.input
 
-        user_messages.append(ChatMessage(role="user", content=prompt))
+        # Call achat_with_tools asynchronously
+        response = await self.llm.achat_with_tools(
+            self.tools, chat_history=chat_history
+        )
 
-        # Get LLM response
-        llm = self.ctx.get("llm")
-        response = await llm.astream_chat(system_msg, user_messages)
+        if response and response.message:
+            memory = await ctx.store.get("memory")
+            memory.put(response.message)
+            await ctx.store.set("memory", memory)
 
-        full_response = ""
-        async for delta in response:
-            if hasattr(delta, 'message') and delta.message.content:
-                full_response += delta.message.content
+        # Robustly extract tool calls from the response
+        tool_calls = []
+        if response:
+            if hasattr(self.llm, "get_tool_calls_from_response"):
+                try:
+                    tool_calls = self.llm.get_tool_calls_from_response(response, error_on_no_tool_call=False)
+                except Exception:
+                    pass
+            if not tool_calls and response.message and "tool_calls" in response.message.additional_kwargs:
+                raw_calls = response.message.additional_kwargs["tool_calls"]
+                for rc in raw_calls:
+                    function = rc.get("function", {})
+                    arguments = function.get("arguments", "{}")
+                    if isinstance(arguments, str):
+                        try:
+                            kwargs_dict = json.loads(arguments)
+                        except Exception:
+                            kwargs_dict = {}
+                    else:
+                        kwargs_dict = arguments
+                    tool_calls.append(ToolSelection(
+                        tool_id=rc.get("id"),
+                        tool_name=function.get("name"),
+                        tool_kwargs=kwargs_dict
+                    ))
 
-        return StopEvent(result={"text": full_response})
+        if not tool_calls:
+            text_response = response.message.content if response and response.message else ""
+            tool_outputs = await ctx.store.get("tool_outputs", default=[])
+            return StopEvent(result={"text": text_response, "tool_outputs": tool_outputs})
+
+        return ToolCallEvent(tool_calls=tool_calls)
+
+    @step
+    async def handle_tool_calls(self, ctx: Context, ev: ToolCallEvent) -> InputEvent:
+        """Execute tool calls and return updated chat history."""
+        tools_by_name = {tool.metadata.get_name(): tool for tool in self.tools}
+        tool_msgs = []
+
+        # Retrieve or initialize tool outputs in ctx.store for API response
+        tool_outputs = await ctx.store.get("tool_outputs", default=[])
+
+        for tool_call in ev.tool_calls:
+            tool = tools_by_name.get(tool_call.tool_name)
+            if tool:
+                tool_output = tool(**tool_call.tool_kwargs)
+                content = tool_output.content
+            else:
+                content = f"Tool {tool_call.tool_name} does not exist"
+                tool_output = None
+
+            if tool_output:
+                try:
+                    tool_output_dict = json.loads(content)
+                except Exception:
+                    tool_output_dict = {"error": f"Invalid JSON output: {content}", "stdout": content}
+            else:
+                tool_output_dict = {"error": content}
+
+            tool_outputs.append(tool_output_dict)
+
+            # Pass both tool_id and tool_call_id so LlamaIndex can successfully serialize it to OpenAI
+            tool_msgs.append(ChatMessage(
+                role="tool",
+                content=content,
+                additional_kwargs={
+                    "tool_id": tool_call.tool_id,
+                    "tool_call_id": tool_call.tool_id,
+                    "name": tool_call.tool_name,
+                }
+            ))
+
+        await ctx.store.set("tool_outputs", tool_outputs)
+
+        memory = await ctx.store.get("memory")
+        for msg in tool_msgs:
+            memory.put(msg)
+        await ctx.store.set("memory", memory)
+
+        return InputEvent(input=memory.get())
+
+
+async def run_workflow_async(messages: list, llm: OpenAILike) -> dict:
+    """Run workflow asynchronously and return result."""
+    try:
+        workflow = LlamaIndexWorkflow(llm=llm, tools=[bash_tool], timeout=120)
+        result = await workflow.run(messages=messages)
+
+        text = result.get("text", "")
+        tool_outputs = result.get("tool_outputs", [])
+
+        return {
+            "text": text,
+            "toolOutputs": tool_outputs
+        }
+    finally:
+        # Cleanly close the async client before the event loop closes to avoid RuntimeError
+        if hasattr(llm, "_aclient") and llm._aclient is not None:
+            try:
+                await llm._aclient.close()
+            except Exception:
+                pass
 
 
 def get_agent_response(messages: list) -> dict:
     """Get response from the workflow."""
     cfg = load_config()
 
-    # Initialize LLM
+    # Initialize LLM with correct parameter mappings and force Chat/Tool capabilities
     llm = OpenAILike(
-        id=cfg["model"],
+        model=cfg["model"],
         api_key=cfg["apiKey"],
-        base_url=cfg["baseURL"],
+        api_base=cfg["baseURL"],
+        is_chat_model=True,
+        is_function_calling_model=True
     )
 
-    # Create and run workflow
-    workflow = LlamaIndexWorkflow(timeout=120)
-    result = workflow.run(messages=messages, llm=llm)
-
-    return {
-        "text": result.get("text", ""),
-        "toolOutputs": []
-    }
+    return asyncio.run(run_workflow_async(messages, llm))
 
 
 @app.route("/health")
@@ -194,5 +306,4 @@ def chat():
 
 if __name__ == "__main__":
     print(f"Starting LlamaIndex Workflow Agent Service on http://localhost:{AGENT_PORT}")
-    print(f"Config: {CONFIG_PATH}")
     app.run(host="0.0.0.0", port=AGENT_PORT)
