@@ -1,16 +1,48 @@
 import { NextResponse } from 'next/server';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFileSync } from 'node:fs';
+import { readFile, access, constants } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadChatletsConfig, getBashCommandsPrompt } from '../../../shared/config-loader';
 
 const execAsync = promisify(exec);
-const CONFIG_PATH = join(process.cwd(), 'config.json');
 
-function loadConfig() {
-  const raw = readFileSync(CONFIG_PATH, 'utf-8');
-  return JSON.parse(raw);
+interface LLMConfig {
+  baseURL: string;
+  apiKey: string;
+  model: string;
+  allowList?: string[];
+  allowAll?: boolean;
+}
+
+const DEFAULT_CONFIG: LLMConfig = {
+  baseURL: 'http://localhost:8080/v1',
+  apiKey: 'sk-fallback',
+  model: 'gpt-4',
+  allowList: [],
+  allowAll: true,
+};
+
+async function loadConfig(): Promise<LLMConfig> {
+  let dir = process.cwd();
+  const root = '/';
+  while (dir !== root) {
+    const configPath = join(dir, 'config', 'config.json');
+    try {
+      await access(configPath, constants.F_OK);
+    } catch {
+      dir = join(dir, '..');
+      continue;
+    }
+    try {
+      const raw = await readFile(configPath, 'utf-8');
+      const parsed: Partial<LLMConfig> = JSON.parse(raw);
+      return { ...DEFAULT_CONFIG, ...parsed };
+    } catch {
+      return DEFAULT_CONFIG;
+    }
+  }
+  return DEFAULT_CONFIG;
 }
 
 function executeBash(command: string, cfg: { allowList: string[]; allowAll: boolean }): Promise<string> {

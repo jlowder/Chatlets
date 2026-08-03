@@ -6,7 +6,7 @@ import { HumanMessage, AIMessage, ToolMessage, SystemMessage } from '@langchain/
 import { Tool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { exec } from 'child_process';
-import { readFile } from 'fs/promises';
+import { readFile, access, constants } from 'fs/promises';
 import { join } from 'path';
 import { loadChatletsConfig, getBashCommandsPrompt } from '../../../shared/config-loader';
 
@@ -34,10 +34,34 @@ interface LLMConfig {
   allowAll?: boolean;
 }
 
+const DEFAULT_CONFIG: LLMConfig = {
+  baseURL: 'http://localhost:8080/v1',
+  apiKey: 'sk-fallback',
+  model: 'gpt-4',
+  allowList: [],
+  allowAll: true,
+};
+
 async function loadConfig(): Promise<LLMConfig> {
-  const configPath = join(process.cwd(), 'config.json');
-  const raw = await readFile(configPath, 'utf-8');
-  return JSON.parse(raw);
+  let dir = process.cwd();
+  const root = '/';
+  while (dir !== root) {
+    const configPath = join(dir, 'config', 'config.json');
+    try {
+      await access(configPath, constants.F_OK);
+    } catch {
+      dir = join(dir, '..');
+      continue;
+    }
+    try {
+      const raw = await readFile(configPath, 'utf-8');
+      const parsed: Partial<LLMConfig> = JSON.parse(raw);
+      return { ...DEFAULT_CONFIG, ...parsed };
+    } catch {
+      return DEFAULT_CONFIG;
+    }
+  }
+  return DEFAULT_CONFIG;
 }
 
 class BashTool extends Tool {

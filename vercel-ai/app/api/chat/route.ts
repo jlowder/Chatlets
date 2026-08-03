@@ -3,18 +3,41 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, tool } from 'ai';
 import { z } from 'zod';
 import { promises as fs } from 'fs';
+const { constants } = fs;
 import { execAsync } from '../../../lib/execAsync';
 import { loadChatletsConfig, getBashCommandsPrompt } from '../../../shared/config-loader';
 
+const DEFAULT_CONFIG = {
+  baseURL: 'http://localhost:8080/v1',
+  apiKey: 'sk-fallback',
+  model: 'gpt-4',
+  allowList: [],
+  allowAll: true,
+};
+
 /**
- * Reads the LLM configuration from config.json.
+ * Reads the LLM configuration from config/config.json, walking up the directory tree.
  */
 async function loadConfig() {
-  const data = await fs.readFile(
-    `${process.cwd()}/config.json`,
-    'utf-8'
-  );
-  return JSON.parse(data);
+  let dir = process.cwd();
+  const root = '/';
+  while (dir !== root) {
+    const configPath = `${dir}/config/config.json`;
+    try {
+      await fs.access(configPath, constants.F_OK);
+    } catch {
+      dir = `${dir}/..`;
+      continue;
+    }
+    try {
+      const data = await fs.readFile(configPath, 'utf-8');
+      const parsed = JSON.parse(data);
+      return { ...DEFAULT_CONFIG, ...parsed };
+    } catch {
+      return DEFAULT_CONFIG;
+    }
+  }
+  return DEFAULT_CONFIG;
 }
 
 /**
