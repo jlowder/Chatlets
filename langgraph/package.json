@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "npx next dev -p 5002",
-    "build": "npx next build",
+    "dev": "npx next dev -p 5002 --webpack",
+    "build": "npx next build --webpack",
     "start": "npx next start"
   },
   "dependencies": {
