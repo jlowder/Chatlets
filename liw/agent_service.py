@@ -208,11 +208,13 @@ class LlamaIndexWorkflow(Workflow):
 
             tool_outputs.append(tool_output_dict)
 
+            # Pass both tool_id and tool_call_id so LlamaIndex can successfully serialize it to OpenAI
             tool_msgs.append(ChatMessage(
                 role="tool",
                 content=content,
                 additional_kwargs={
                     "tool_id": tool_call.tool_id,
+                    "tool_call_id": tool_call.tool_id,
                     "name": tool_call.tool_name,
                 }
             ))
@@ -229,16 +231,24 @@ class LlamaIndexWorkflow(Workflow):
 
 async def run_workflow_async(messages: list, llm: OpenAILike) -> dict:
     """Run workflow asynchronously and return result."""
-    workflow = LlamaIndexWorkflow(llm=llm, tools=[bash_tool], timeout=120)
-    result = await workflow.run(messages=messages)
+    try:
+        workflow = LlamaIndexWorkflow(llm=llm, tools=[bash_tool], timeout=120)
+        result = await workflow.run(messages=messages)
 
-    text = result.get("text", "")
-    tool_outputs = result.get("tool_outputs", [])
+        text = result.get("text", "")
+        tool_outputs = result.get("tool_outputs", [])
 
-    return {
-        "text": text,
-        "toolOutputs": tool_outputs
-    }
+        return {
+            "text": text,
+            "toolOutputs": tool_outputs
+        }
+    finally:
+        # Cleanly close the async client before the event loop closes to avoid RuntimeError
+        if hasattr(llm, "_aclient") and llm._aclient is not None:
+            try:
+                await llm._aclient.close()
+            except Exception:
+                pass
 
 
 def get_agent_response(messages: list) -> dict:
