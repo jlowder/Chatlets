@@ -3,16 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "npx next dev -p 5007",
-    "build": "npx next build",
+    "dev": "npx next dev -p 5007 --webpack",
+    "build": "npx next build --webpack",
     "start": "npx next start"
   },
   "dependencies": {
-    "next": "16.2.10"
+    "@ai-sdk/openai": "^4.0.27",
+    "@mastra/core": "^1.55.0",
+    "@swc/helpers": "^0.5.23",
+    "ai": "^7.0.48",
+    "next": "16.2.10",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^20",
     "@types/node-fetch": "^2.6.0",
+    "@types/react": "19.2.18",
     "typescript": "^5"
   }
 }
