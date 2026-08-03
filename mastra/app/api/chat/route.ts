@@ -27,7 +27,11 @@ const bashTool = createTool({
 
     if (!allowAll && !allowList.includes(cmdName)) {
       console.log('Command not allowed:', cmdName);
-      return { error: `Command '${cmdName}' not allowed` };
+      return {
+        stdout: '',
+        stderr: '',
+        error: `Command '${cmdName}' not allowed`,
+      };
     }
 
     try {
@@ -40,7 +44,11 @@ const bashTool = createTool({
     } catch (err: any) {
       console.log('execAsync error:', err);
       if (err.message && err.message.includes('timeout')) {
-        return { error: 'Command timed out' };
+        return {
+          stdout: '',
+          stderr: '',
+          error: 'Command timed out',
+        };
       }
       return {
         error: err.message ?? 'Execution failed',
@@ -99,8 +107,30 @@ export async function POST(request: Request) {
     // Extract text response
     const text = result.text || '';
 
+    // Collect tool results from both result.toolResults and result.steps to ensure robustness
+    const rawToolResults: any[] = [];
+    const seenToolCallIds = new Set<string>();
+
+    for (const tr of (result.toolResults || [])) {
+      const id = (tr as any).toolCallId || (tr as any).id;
+      if (id && !seenToolCallIds.has(id)) {
+        seenToolCallIds.add(id);
+        rawToolResults.push(tr);
+      }
+    }
+
+    for (const step of (result.steps || [])) {
+      for (const tr of ((step as any).toolResults || [])) {
+        const id = (tr as any).toolCallId || (tr as any).id;
+        if (id && !seenToolCallIds.has(id)) {
+          seenToolCallIds.add(id);
+          rawToolResults.push(tr);
+        }
+      }
+    }
+
     // Extract tool outputs and map them to standard format robustly
-    const toolOutputs: any[] = (result.toolResults || []).map((tr: any) => {
+    const toolOutputs: any[] = rawToolResults.map((tr: any) => {
       console.log('=== Mapping tr ===', JSON.stringify(tr, null, 2));
 
       // 1. Resolve output container: tr.payload.result or tr.result or tr.output or tr itself
@@ -134,7 +164,7 @@ export async function POST(request: Request) {
       };
     });
 
-    // 4. Double-insurance fallback: If toolOutputs is empty, try extracting from steps content
+    // 4. Double-insurance fallback: If toolOutputs is still empty, try extracting from steps content
     if (toolOutputs.length === 0 && result.steps) {
       for (const step of result.steps) {
         for (const item of step.content ?? []) {
