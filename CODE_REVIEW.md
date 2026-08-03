@@ -90,14 +90,38 @@ The CrewAI service has a significant concurrency issue that will cause cross-tal
 
 ---
 
-### 3.4 Mastra (`mastra`) — [FRAMEWORK DECEPTION]
+### 3.4 Microsoft Agent Framework (`maf`) — [PROMPT INJECTION & MANUAL LOGS]
+1. **Manual Conversation Logs and History Formatting**:
+   Similar to Agno, the Microsoft Agent Framework implementation reconstructs conversation history manually into a raw text string, which is then formatted and passed as a single user prompt:
+   ```python
+   user_messages = []
+   for m in messages:
+       if m["role"] == "user":
+           user_messages.append(f"User: {m['content']}")
+       elif m["role"] == "assistant":
+           user_messages.append(f"Assistant: {m['content']}")
+
+   history = "\n".join(user_messages[:-1]) if len(user_messages) > 1 else ""
+   current_prompt = user_messages[-1].replace("User: ", "") if user_messages else ""
+   full_prompt = f"Previous conversation:\n{history}\n\n{current_prompt}" if history else current_prompt
+   ```
+   Passing this conversation log bypasses native multi-turn message structured array handling. The agent operates within a single-turn execution context where all prior messages are mocked as user input text. This can lead to **role confusion** (where the model mimics the formatted roles or acts on the fake assistant responses) and leaves the backend susceptible to **prompt injection**.
+2. **Stateless Agent Recreation**:
+   Every REST request to `/chat` instantiates a brand new agent via `client.as_agent(...)`. By failing to persist agent instances or session states on the server, the implementation avoids using the framework's native thread/session management features.
+3. **Complex Inner Attribute Inspection**:
+   To extract tool outputs and assistant responses, the code performs deep introspection on the inner structures of `result.messages` and nested message content lists (`msg.contents`, `ci.type`, `ci.result`):
+   This coupling makes the wrapper highly dependent on undocumented internals, increasing fragility against minor framework version upgrades.
+
+---
+
+### 3.5 Mastra (`mastra`) — [FRAMEWORK DECEPTION]
 1. **Shortcut / Framework Evasion**:
    The `mastra` monolithic backend **does not use the Mastra SDK at all** in its `route.ts`. Instead, it completely bypasses the framework, implementing a custom manual loop using direct `fetch` calls to the raw OpenAI `/chat/completions` endpoint and manually parsing `tool_calls`.
    While this code runs correctly, it violates the core premise of comparing framework ergonomics, since the Mastra framework itself is excluded from the execution path.
 
 ---
 
-### 3.5 LangChain (`langchain`) & LangGraph (`langgraph`) — [STATE EVASION]
+### 3.6 LangChain (`langchain`) & LangGraph (`langgraph`) — [STATE EVASION]
 1. **Bypassing the Graph's Session/Memory State**:
    Both LangChain and LangGraph backends construct a `MemorySaver` but invoke the agent with a completely new, randomized thread ID every single request:
    ```typescript
@@ -107,7 +131,7 @@ The CrewAI service has a significant concurrency issue that will cause cross-tal
 
 ---
 
-### 3.6 Smolagents (`smolagents`) — [FRAGILE COUPLING]
+### 3.7 Smolagents (`smolagents`) — [FRAGILE COUPLING]
 1. **Coupling to Internal, Private Attributes**:
    Smolagents does not have a simple hook for structured tool results, so the server extracts them by scanning internal steps:
    ```python
@@ -119,7 +143,7 @@ The CrewAI service has a significant concurrency issue that will cause cross-tal
 
 ---
 
-### 3.7 Pydantic AI (`pydantic`) — [HIGH-QUALITY IMPLEMENTATION]
+### 3.8 Pydantic AI (`pydantic`) — [HIGH-QUALITY IMPLEMENTATION]
 - **Strengths**:
   - Highly idiomatic. Uses dynamic dependency injection (`ChatDeps`) to safely pass the allow-list and allow-all settings to the tool run context.
   - Extracts tool returns cleanly from `result.all_messages()` utilizing standard typed message schemas.
@@ -127,7 +151,7 @@ The CrewAI service has a significant concurrency issue that will cause cross-tal
 
 ---
 
-### 3.8 Vercel AI SDK (`vercel-ai`) — [HIGH-QUALITY IMPLEMENTATION]
+### 3.9 Vercel AI SDK (`vercel-ai`) — [HIGH-QUALITY IMPLEMENTATION]
 - **Strengths**:
   - The most robust, concise, and production-ready implementation in the repository.
   - Clean TypeScript typing, strict schema definition using `zod`, and native handling of multi-step tool calls via `maxSteps`.
