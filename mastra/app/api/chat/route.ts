@@ -107,25 +107,55 @@ export async function POST(request: Request) {
     // Extract text response
     const text = result.text || '';
 
-    // Collect tool results from both result.toolResults and result.steps to ensure robustness
+    // Collect tool results from all possible paths in result to ensure absolute robustness
     const rawToolResults: any[] = [];
     const seenToolCallIds = new Set<string>();
 
-    for (const tr of (result.toolResults || [])) {
-      const id = (tr as any).toolCallId || (tr as any).id;
+    const addRaw = (tr: any) => {
+      if (!tr) return;
+      const id = tr.toolCallId || tr.id || tr.toolCall?.id;
       if (id && !seenToolCallIds.has(id)) {
         seenToolCallIds.add(id);
         rawToolResults.push(tr);
       }
+    };
+
+    // 1. result.toolResults
+    for (const tr of result.toolResults || []) {
+      addRaw(tr);
     }
 
-    for (const step of (result.steps || [])) {
-      for (const tr of ((step as any).toolResults || [])) {
-        const id = (tr as any).toolCallId || (tr as any).id;
-        if (id && !seenToolCallIds.has(id)) {
-          seenToolCallIds.add(id);
-          rawToolResults.push(tr);
+    // 2. result.toolInvocations
+    for (const tr of (result as any).toolInvocations || []) {
+      addRaw(tr);
+    }
+
+    // 3. result.steps (toolResults and toolInvocations)
+    for (const step of result.steps || []) {
+      for (const tr of (step as any).toolResults || []) {
+        addRaw(tr);
+      }
+      for (const tr of (step as any).toolInvocations || []) {
+        addRaw(tr);
+      }
+    }
+
+    // 4. result.messages (toolInvocations and content.toolInvocations)
+    for (const msg of (result as any).messages || []) {
+      for (const tr of msg.toolInvocations || []) {
+        addRaw(tr);
+      }
+      if (msg.content && typeof msg.content === 'object') {
+        for (const tr of msg.content.toolInvocations || []) {
+          addRaw(tr);
         }
+      }
+    }
+
+    // 5. result.content (toolInvocations)
+    if ((result as any).content && typeof (result as any).content === 'object') {
+      for (const tr of (result as any).content.toolInvocations || []) {
+        addRaw(tr);
       }
     }
 
