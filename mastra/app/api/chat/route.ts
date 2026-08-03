@@ -103,8 +103,10 @@ export async function POST(request: Request) {
     const toolOutputs: any[] = (result.toolResults || []).map((tr: any) => {
       console.log('=== Mapping tr ===', JSON.stringify(tr, null, 2));
 
-      // 1. Resolve output container: tr.result or tr.output or tr itself
-      let rawOutput = tr.result !== undefined ? tr.result : (tr.output !== undefined ? tr.output : tr);
+      // 1. Resolve output container: tr.payload.result or tr.result or tr.output or tr itself
+      let rawOutput = tr.payload?.result !== undefined
+        ? tr.payload.result
+        : (tr.result !== undefined ? tr.result : (tr.output !== undefined ? tr.output : tr));
 
       // 2. If it is a string, try parsing it as JSON first (e.g. if stringified by the runner)
       if (typeof rawOutput === 'string') {
@@ -115,7 +117,7 @@ export async function POST(request: Request) {
           return {
             stdout: rawOutput.trim(),
             stderr: '',
-            error: tr.isError ? (tr.error?.message || 'Execution failed') : undefined,
+            error: tr.isError || tr.payload?.isError ? (tr.error?.message || tr.payload?.error?.message || 'Execution failed') : undefined,
           };
         }
       }
@@ -128,7 +130,7 @@ export async function POST(request: Request) {
       return {
         stdout: typeof stdout === 'string' ? stdout.trim() : (stdout !== null && stdout !== undefined ? String(stdout) : ''),
         stderr: typeof stderr === 'string' ? stderr.trim() : (stderr !== null && stderr !== undefined ? String(stderr) : ''),
-        error: error || (tr.isError ? (tr.error?.message || 'Execution failed') : undefined),
+        error: error || (tr.isError || tr.payload?.isError ? (tr.error?.message || tr.payload?.error?.message || 'Execution failed') : undefined),
       };
     });
 
