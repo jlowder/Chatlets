@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 export async function POST(request: Request) {
   try {
-    const agentUrl = 'http://localhost:5000/chat';
+    const agentUrl = 'http://localhost:5004/chat';
     const res = await fetch(agentUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -247,11 +247,13 @@ def get_agent_response(messages: list) -> dict:
     """Get response from the workflow."""
     cfg = load_config()
 
-    # Initialize LLM with correct parameter mappings
+    # Initialize LLM with correct parameter mappings and force Chat/Tool capabilities
     llm = OpenAILike(
         model=cfg["model"],
         api_key=cfg["apiKey"],
         api_base=cfg["baseURL"],
+        is_chat_model=True,
+        is_function_calling_model=True
     )
 
     return asyncio.run(run_workflow_async(messages, llm))
