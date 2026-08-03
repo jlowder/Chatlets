@@ -15,12 +15,15 @@ import sys
 import os
 import io
 import time
+import contextvars
 from pathlib import Path
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
+_current_tool_outputs = contextvars.ContextVar("current_tool_outputs", default=None)
+
 # Add parent directory to path for shared config loader
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from shared.config_loader import load_chatlets_config, get_bash_commands_prompt
 
 # Smolagents imports
@@ -33,13 +36,11 @@ CORS(app)
 import werkzeug.serving
 werkzeug.serving.WSGIRequestHandler.log_request = lambda self, format, *args: None
 
-CONFIG_PATH = Path(__file__).parent / "config.json"
 AGENT_PORT = int(__import__("os").environ.get("AGENT_PORT", 5010))
 
 
 def load_config():
-    with open(CONFIG_PATH) as f:
-        return json.load(f)
+    return load_chatlets_config()
 
 
 @tool
@@ -59,7 +60,14 @@ def bash_tool(command: str) -> str:
     cmd_name = cmd.split()[0] if cmd else ""
 
     if not cfg.get("allowAll", False) and cmd_name not in cfg.get("allowList", ["ls", "pwd"]):
-        return json.dumps({"error": f"Command '{cmd_name}' not allowed"})
+        err_msg = f"Command '{cmd_name}' not allowed"
+        try:
+            outputs_list = _current_tool_outputs.get()
+            if outputs_list is not None:
+                outputs_list.append({"error": err_msg})
+        except LookupError:
+            pass
+        return json.dumps({"error": err_msg})
 
     try:
         result = subprocess.run(
@@ -74,11 +82,37 @@ def bash_tool(command: str) -> str:
             output["stderr"] = result.stderr
         if result.returncode != 0:
             output["error"] = result.stderr or f"Exit code {result.returncode}"
+
+        try:
+            outputs_list = _current_tool_outputs.get()
+            if outputs_list is not None:
+                outputs_list.append({
+                    "stdout": output.get("stdout"),
+                    "stderr": output.get("stderr"),
+                    "error": output.get("error"),
+                })
+        except LookupError:
+            pass
+
         return json.dumps(output)
     except subprocess.TimeoutExpired:
-        return json.dumps({"error": "Command timed out"})
+        err_msg = "Command timed out"
+        try:
+            outputs_list = _current_tool_outputs.get()
+            if outputs_list is not None:
+                outputs_list.append({"error": err_msg})
+        except LookupError:
+            pass
+        return json.dumps({"error": err_msg})
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        err_msg = str(e)
+        try:
+            outputs_list = _current_tool_outputs.get()
+            if outputs_list is not None:
+                outputs_list.append({"error": err_msg})
+        except LookupError:
+            pass
+        return json.dumps({"error": err_msg})
 
 
 def create_agent():
@@ -115,11 +149,9 @@ async def run_agent(messages: list) -> dict:
     
     agent = create_agent()
     
-    # Reset state
+    # Reset state (defensive, public API)
     if hasattr(agent, 'reset'):
         agent.reset()
-    if hasattr(agent, 'memory') and hasattr(agent.memory, 'steps'):
-        agent.memory.steps.clear()
     
     # Build conversation context
     user_messages = []
@@ -141,70 +173,17 @@ async def run_agent(messages: list) -> dict:
     sys.stdout = io.StringIO()
     sys.stderr = io.StringIO()
     
+    tool_outputs = []
+    token = _current_tool_outputs.set(tool_outputs)
+
     try:
         result = agent.run(full_prompt)
     finally:
         sys.stdout = old_stdout
         sys.stderr = old_stderr
+        _current_tool_outputs.reset(token)
     
-    # Extract tool outputs from memory steps
-    tool_outputs = []
-    final_text = None
-    tool_call_count = 0
-    has_echo_fail = False
-    has_real_tool = False
-    
-    try:
-        steps = agent.memory.steps if hasattr(agent, 'memory') and hasattr(agent.memory, 'steps') else []
-        
-        for step in steps:
-            # Extract tool outputs
-            if hasattr(step, 'tool_calls') and step.tool_calls:
-                tool_call_count += 1
-                for tc in step.tool_calls:
-                    tc_name = getattr(tc, 'name', '') if hasattr(tc, 'name') else ''
-                    if tc_name in ('bash', 'bash_tool'):
-                        output = str(step.observations) if hasattr(step, 'observations') and step.observations else ''
-                        try:
-                            parsed = json.loads(output)
-                            if isinstance(parsed, dict) and any(k in parsed for k in ('stdout', 'stderr', 'error')):
-                                tool_outputs.append({
-                                    "stdout": parsed.get("stdout"),
-                                    "stderr": parsed.get("stderr"),
-                                    "error": parsed.get("error"),
-                                })
-                                if "echo" in str(tc_name) or (isinstance(parsed.get("error"), str) and "echo" in parsed.get("error")):
-                                    has_echo_fail = True
-                                elif "error" not in parsed:
-                                    has_real_tool = True
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-            
-            # Get final text from last step
-            if hasattr(step, 'model_output') and step.model_output:
-                final_text = str(step.model_output).strip()
-    except Exception:
-        pass
-    
-    # Trigger-phrase validation: only return tool outputs if user asked for a command
-    last_user_msg = ""
-    for m in reversed(messages):
-        if m["role"] == "user":
-            last_user_msg = m["content"].lower()
-            break
-    
-    has_command_trigger = any(phrase in last_user_msg for phrase in [
-        "run ", "execute ", "run the command", "run ls", "run pwd", "run '", "run \"", "run:"])
-    
-    # If no command trigger, ignore tool outputs and return text answer
-    if not has_command_trigger or (has_echo_fail and not has_real_tool):
-        tool_outputs = []
-        if final_text and len(final_text) > 0:
-            if len(final_text) > 500:
-                final_text = final_text[:500].rsplit(' ', 1)[0] + '...'
-            return {"text": final_text, "toolOutputs": []}
-    
-    # Tool outputs take priority (if we got here, user asked for a command)
+    # If any tool outputs were captured, return them (natural reasoning-loop autonomy)
     if tool_outputs:
         return {"text": "", "toolOutputs": tool_outputs}
     
@@ -252,5 +231,5 @@ def chat():
 
 if __name__ == "__main__":
     print(f"Starting Smolagents Agent Service on http://localhost:{AGENT_PORT}")
-    print(f"Config: {CONFIG_PATH}")
+    print("Config: Shared Config Loader")
     app.run(host="0.0.0.0", port=AGENT_PORT)
