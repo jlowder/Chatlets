@@ -198,12 +198,25 @@ def chat():
                 print(f"[{i}] role={role} content={repr(content)}", flush=True)
         print("=== END CONTEXT ===", flush=True)
 
+        # Find the last input message in the result messages to identify newly generated messages
+        last_input_msg = agno_messages[-1] if agno_messages else None
+        last_input_idx = -1
+        if last_input_msg and hasattr(result, "messages") and result.messages:
+            for i, msg in enumerate(result.messages):
+                if msg is last_input_msg or (
+                    getattr(msg, "role", None) == last_input_msg.role and
+                    getattr(msg, "content", None) == last_input_msg.content
+                ):
+                    last_input_idx = i
+
+        new_messages = result.messages[last_input_idx + 1:] if last_input_idx != -1 and hasattr(result, "messages") else (result.messages if hasattr(result, "messages") else [])
+
         # Extract final text response from assistant messages
         text = ""
         if hasattr(result, "content") and result.content:
             text = str(result.content)
-        elif hasattr(result, "messages") and result.messages:
-            for msg in reversed(result.messages):
+        elif new_messages:
+            for msg in reversed(new_messages):
                 if getattr(msg, "role", None) == "assistant":
                     content = msg.content
                     if isinstance(content, list):
@@ -216,8 +229,8 @@ def chat():
 
         # Extract tool call results from messages with role='tool'
         tool_outputs = []
-        if hasattr(result, "messages") and result.messages:
-            for msg in result.messages:
+        if new_messages:
+            for msg in new_messages:
                 if getattr(msg, "role", None) == "tool":
                     content = msg.content
                     if isinstance(content, str):

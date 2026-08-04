@@ -85,5 +85,51 @@ class TestAgentService(unittest.TestCase):
         self.assertEqual(agno_messages[0].role, "user")
         self.assertEqual(agno_messages[0].content, "describe python")
 
+    @patch('agent_service.Agent')
+    def test_chat_filters_historical_tool_outputs(self, mock_agent_class):
+        mock_agent_instance = MagicMock()
+        mock_agent_class.return_value = mock_agent_instance
+
+        # Prepare history input messages
+        msg_history = [
+            {"role": "user", "content": "run: ls"},
+            {"role": "tool", "content": '{"stdout": "file1.txt", "stderr": ""}'},
+            {"role": "assistant", "content": "List of files: file1.txt"},
+            {"role": "user", "content": "run: who"}
+        ]
+
+        # Convert to AgnoMessage list
+        agno_history = [AgnoMessage(role=m["role"], content=m["content"]) for m in msg_history]
+
+        # Setup mock return messages that contains all history AND the new run's messages
+        mock_result = MagicMock()
+        mock_result.content = "Command 'who' not allowed"
+        mock_result.messages = [
+            # Pre-existing messages (history)
+            agno_history[0],
+            agno_history[1],
+            agno_history[2],
+            agno_history[3],
+            # Newly generated messages in this turn
+            AgnoMessage(role="tool", content='{"error": "Command \'who\' not allowed", "stdout": "", "stderr": ""}'),
+            AgnoMessage(role="assistant", content="Command 'who' not allowed")
+        ]
+        mock_agent_instance.run.return_value = mock_result
+
+        # Post request
+        payload = {
+            "messages": msg_history
+        }
+        response = self.app.post('/chat',
+                                 data=json.dumps(payload),
+                                 content_type='application/json')
+
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+
+        # The response must ONLY contain the new tool outputs, not the old ones
+        self.assertEqual(len(data["toolOutputs"]), 1)
+        self.assertEqual(data["toolOutputs"][0]["error"], "Command 'who' not allowed")
+
 if __name__ == '__main__':
     unittest.main()
