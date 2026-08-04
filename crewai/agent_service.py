@@ -5,7 +5,7 @@ This service is called by the Next.js API route.
 Usage:
     python agent_service.py
 
-Runs on http://localhost:5000
+Runs on http://localhost:5012
 """
 
 import json
@@ -35,8 +35,10 @@ except ImportError as e:
 app = Flask(__name__)
 CORS(app)
 
-# Module-level capture for tool outputs
-_captured_tool_outputs = []
+import contextvars
+
+# Thread-safe ContextVar for capturing tool outputs
+_captured_tool_outputs = contextvars.ContextVar("captured_tool_outputs", default=None)
 
 # --- Configuration ---
 
@@ -62,27 +64,44 @@ class BashTool(BaseTool):
     def _run(self, command: str) -> str:
         """Execute a bash command on the server."""
         import shlex
+        import re
         # Allow list check
         cfg = load_config()
         allow_list = cfg.get("allowList", ["ls", "pwd"])
         allow_all = cfg.get("allowAll", False)
         
+        outputs_list = _captured_tool_outputs.get()
+
         cmd = command.strip().strip('"').strip("'").strip()
         if not cmd:
             output = {"error": "Empty command", "stdout": "", "stderr": ""}
-            _captured_tool_outputs.append(output)
+            if outputs_list is not None:
+                outputs_list.append(output)
+            return json.dumps(output)
+
+        # Block shell operators / chaining to prevent confusion and injection attempts
+        if re.search(r"[&;|<>$`\n\r]", cmd):
+            output = {
+                "error": "Shell operators or chained commands (like &&, ;, |, <, >, $, `) are not allowed",
+                "stdout": "",
+                "stderr": "",
+            }
+            if outputs_list is not None:
+                outputs_list.append(output)
             return json.dumps(output)
 
         try:
             args = shlex.split(cmd)
         except Exception as e:
             output = {"error": f"Failed to parse command: {str(e)}", "stdout": "", "stderr": ""}
-            _captured_tool_outputs.append(output)
+            if outputs_list is not None:
+                outputs_list.append(output)
             return json.dumps(output)
 
         if not args:
             output = {"error": "Empty command", "stdout": "", "stderr": ""}
-            _captured_tool_outputs.append(output)
+            if outputs_list is not None:
+                outputs_list.append(output)
             return json.dumps(output)
 
         base_cmd = args[0]
@@ -92,7 +111,8 @@ class BashTool(BaseTool):
                 "stdout": "",
                 "stderr": ""
             }
-            _captured_tool_outputs.append(output)
+            if outputs_list is not None:
+                outputs_list.append(output)
             return json.dumps(output)
         
         try:
@@ -102,15 +122,18 @@ class BashTool(BaseTool):
             output = {"stdout": result.stdout.strip(), "stderr": result.stderr.strip()}
             if result.returncode != 0:
                 output["error"] = f"Command exited with code {result.returncode}"
-            _captured_tool_outputs.append(output)
+            if outputs_list is not None:
+                outputs_list.append(output)
             return json.dumps(output)
         except subprocess.TimeoutExpired:
             output = {"error": "Command timed out (30s)", "stdout": "", "stderr": ""}
-            _captured_tool_outputs.append(output)
+            if outputs_list is not None:
+                outputs_list.append(output)
             return json.dumps(output)
         except Exception as e:
             output = {"error": str(e), "stdout": "", "stderr": ""}
-            _captured_tool_outputs.append(output)
+            if outputs_list is not None:
+                outputs_list.append(output)
             return json.dumps(output)
 
 
@@ -158,6 +181,7 @@ def create_agent():
         llm=llm,
         tools=[bash_tool],
         max_iter=5,
+        max_execution_time=300,
         verbose=False,
     )
     
@@ -178,6 +202,8 @@ def chat():
     Expected JSON body: {"messages": [{"role": "user"|"assistant", "content": "..."}]}
     Returns: {"text": "...", "toolOutputs": [...]}
     """
+    import time
+    print(f"\n[crewai agent_service] /chat requested at {time.strftime('%H:%M:%S')}", flush=True)
     try:
         data = request.get_json()
         if not data:
@@ -201,7 +227,10 @@ def chat():
         context_parts = []
         for m in messages[:-1]:  # All messages except the last (current) one
             role_label = "user" if m["role"] == "user" else "assistant"
-            context_parts.append(f"{role_label}: {m['content']}")
+            content = m["content"].strip()
+            if not content and m["role"] == "assistant":
+                content = "[Executed bash tool command]"
+            context_parts.append(f"{role_label}: {content}")
         context = "\n".join(context_parts) if context_parts else None
 
         # The last message is the current prompt
@@ -215,43 +244,48 @@ def chat():
 
         agent = create_agent()
 
-        # Reset captured outputs before this run
-        _captured_tool_outputs.clear()
+        # Thread-safe tool output capture initialization
+        local_tool_outputs = []
+        token = _captured_tool_outputs.set(local_tool_outputs)
 
-        # Create a task from the prompt (with context if available)
-        task = Task(
-            description=task_description,
-            expected_output="A response to the user's request, with tool results if needed.",
-            agent=agent,
-        )
-        
-        # Assemble the crew and execute
-        crew = Crew(
-            agents=[agent],
-            tasks=[task],
-            verbose=False,
-        )
-        
-        result = crew.kickoff()
-        
-        # Extract text response
-        text = ""
-        if hasattr(result, 'output') and result.output:
-            text = str(result.output)
-        elif hasattr(result, 'raw') and result.raw:
-            text = str(result.raw)
-        
-        # Extract tool outputs from captured list
-        tool_outputs = list(_captured_tool_outputs)
-        _captured_tool_outputs.clear()
+        try:
+            # Create a task from the prompt (with context if available)
+            task = Task(
+                description=task_description,
+                expected_output="A response to the user's request, with tool results if needed.",
+                agent=agent,
+            )
+
+            # Assemble the crew and execute
+            crew = Crew(
+                agents=[agent],
+                tasks=[task],
+                verbose=False,
+            )
+
+            result = crew.kickoff()
+
+            # Extract text response
+            text = ""
+            if hasattr(result, 'output') and result.output:
+                text = str(result.output)
+            elif hasattr(result, 'raw') and result.raw:
+                text = str(result.raw)
+
+            # Extract tool outputs from captured list
+            tool_outputs = list(local_tool_outputs)
+        finally:
+            _captured_tool_outputs.reset(token)
         
         # Suppress LLM text response when we have tool outputs
         if tool_outputs:
             text = ""
         
+        print(f"[crewai agent_service] /chat completed successfully with {len(tool_outputs)} tool outputs", flush=True)
         return jsonify({"text": text, "toolOutputs": tool_outputs})
         
     except RuntimeError as e:
+        print(f"[crewai agent_service] /chat RuntimeError: {e}", flush=True)
         return jsonify({"error": str(e), "text": "", "toolOutputs": []}), 500
     except Exception as e:
         import traceback
@@ -260,7 +294,7 @@ def chat():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("CREWAI_PORT", 5000))
+    port = int(os.environ.get("CREWAI_PORT", 5012))
     print(f"Starting CrewAI Agent Service on http://localhost:{port}")
     print("Config: Shared Config Loader")
     print(f"CrewAI available: {CREWAI_AVAILABLE}")
