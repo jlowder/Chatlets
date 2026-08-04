@@ -18,14 +18,12 @@ from shared.config_loader import load_chatlets_config, get_bash_commands_prompt
 app = Flask(__name__)
 CORS(app)
 
-CONFIG_PATH = Path(__file__).parent / "config.json"
 AGENT_PORT = int(os.environ.get("AGENT_PORT", 5006))
 
 
 def load_config() -> dict:
-    """Load LLM and tool configuration from config.json."""
-    with open(CONFIG_PATH) as f:
-        return json.load(f)
+    """Load LLM and tool configuration using shared config loader."""
+    return load_chatlets_config()
 
 
 class BashTool:

@@ -29,13 +29,11 @@ from pydantic_ai.providers.openai import OpenAIProvider
 app = Flask(__name__)
 CORS(app)
 
-CONFIG_PATH = Path(__file__).parent / "config.json"
 AGENT_PORT = int(__import__("os").environ.get("AGENT_PORT", 5008))
 
 
 def load_config():
-    with open(CONFIG_PATH) as f:
-        return json.load(f)
+    return load_chatlets_config()
 
 
 class ChatDeps:

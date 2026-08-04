@@ -33,23 +33,11 @@ app = Flask(__name__)
 CORS(app)
 
 # --- Configuration ---
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
 
 def load_config():
-    """Load LLM and tool configuration from config.json."""
-    try:
-        with open(CONFIG_PATH, "r") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {
-            "provider": "YOUR_PROVIDER",
-            "baseURL": "http://localhost:8080/v1",
-            "apiKey": "example",
-            "model": "openai-compatible:modelName",
-            "allowList": ["ls", "pwd"],
-            "allowAll": False,
-        }
+    """Load LLM and tool configuration using shared config loader."""
+    return load_chatlets_config()
 
 
 # --- Bash Tool ---
