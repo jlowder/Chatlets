@@ -18,8 +18,8 @@ The shared frontend proxies requests to whichever backend you configure via `CHA
 
 Two deployment patterns exist:
 
-- **Monolithic** — Single Next.js process (vercel-ai, langchain, langgraph)
-- **Split** — Flask agent service + Next.js proxy (crewai, smolagents, pydantic, maf, mastra, agno, liw)
+- **Monolithic** — Single Next.js process (vercel-ai, langchain, langgraph, mastra)
+- **Split** — Flask agent service + Next.js proxy (crewai, smolagents, pydantic, maf, agno, liw)
 
 ![Chat Interface](doc/screenshot.png)
 
@@ -34,7 +34,7 @@ Two deployment patterns exist:
 | LangGraph | Monolithic | 5002 | StateGraph with routing |
 | LlamaIndex Workflows | Split | 5003 | Event-driven agent |
 | Microsoft Agent Framework | Split | 5005 | @tool decorator |
-| Mastra | Monolithic | 5007 | Direct fetch + AI SDK |
+| Mastra | Monolithic | 5000 | @mastra/core Agent with createTool() |
 | Pydantic AI | Split | 5009 | @agent.tool decorator |
 | Smolagents | Split | 5011 | CodeAgent / ToolCallingAgent |
 
