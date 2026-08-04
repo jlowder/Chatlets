@@ -239,12 +239,14 @@ def chat():
         last_input_msg = agno_messages[-1] if agno_messages else None
         last_input_idx = -1
         if last_input_msg and hasattr(result, "messages") and result.messages:
-            for i, msg in enumerate(result.messages):
+            for i in range(len(result.messages) - 1, -1, -1):
+                msg = result.messages[i]
                 if msg is last_input_msg or (
                     getattr(msg, "role", None) == last_input_msg.role and
                     getattr(msg, "content", None) == last_input_msg.content
                 ):
                     last_input_idx = i
+                    break
 
         new_messages = result.messages[last_input_idx + 1:] if last_input_idx != -1 and hasattr(result, "messages") else (result.messages if hasattr(result, "messages") else [])
 
