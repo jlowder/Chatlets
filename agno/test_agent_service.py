@@ -139,5 +139,20 @@ class TestAgentService(unittest.TestCase):
         self.assertEqual(len(data["toolOutputs"]), 1)
         self.assertEqual(data["toolOutputs"][0]["error"], "Command 'who' not allowed")
 
+    def test_bash_tool_blocks_chained_commands(self):
+        from agent_service import bash_tool
+
+        # Test command with '&&'
+        res1 = json.loads(bash_tool("pwd && who"))
+        self.assertIn("Shell operators or chained commands", res1["error"])
+
+        # Test command with ';'
+        res2 = json.loads(bash_tool("ls; who"))
+        self.assertIn("Shell operators or chained commands", res2["error"])
+
+        # Test command with '|'
+        res3 = json.loads(bash_tool("cat file | grep text"))
+        self.assertIn("Shell operators or chained commands", res3["error"])
+
 if __name__ == '__main__':
     unittest.main()

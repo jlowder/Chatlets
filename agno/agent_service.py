@@ -67,6 +67,15 @@ def bash_tool(command: str, run_context=None) -> str:
             {"error": "Empty command", "stdout": "", "stderr": ""}
         )
 
+    import re
+    # Block shell operators / chaining to prevent confusion and injection attempts
+    if re.search(r"[&;|<>$`\n\r]", cmd):
+        return json.dumps({
+            "error": "Shell operators or chained commands (like &&, ;, |, <, >, $, `) are not allowed",
+            "stdout": "",
+            "stderr": "",
+        })
+
     try:
         args = shlex.split(cmd)
     except Exception as e:
