@@ -11,10 +11,13 @@
     "ai": "^7.0.34",
     "next": "^16.2.10",
     "playwright": "^1.62.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "zod": "^3.25.0"
   },
   "devDependencies": {
     "@types/node": "^20",
+    "@types/react": "19.2.18",
     "typescript": "^5"
   }
 }

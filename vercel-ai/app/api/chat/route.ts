@@ -3,8 +3,8 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, tool } from 'ai';
 import { z } from 'zod';
 import { promises as fs } from 'fs';
-import { execAsync } from '../../../lib/execAsync';
-import { loadChatletsConfig, getBashCommandsPrompt } from '../../../shared/config-loader';
+import { execAsync, tokenize } from '../../../lib/execAsync';
+import { loadChatletsConfig, getBashCommandsPrompt } from '../../../../shared/config-loader';
 
 /**
  * Reads the LLM configuration from config.json.
@@ -26,18 +26,28 @@ const bashTool = tool({
   parameters: z.object({
     command: z.string().describe('The bash/shell command to execute'),
   }),
-  execute: async ({ command }) => {
+  execute: (async ({ command }: any) => {
     // Load allow list configuration
     const cfg = await loadConfig();
     const allowAll = cfg.allowAll ?? false;
     const allowList = cfg.allowList ?? ['ls', 'pwd'];
-    const baseCmd = command.trim().split(/\s+/)[0];
+
+    const args = tokenize(command);
+    const baseCmd = args[0] ?? '';
+
     if (!allowAll && !allowList.includes(baseCmd)) {
-      return { error: `Command "${baseCmd}" is not allowed.` };
+      return {
+        error: `Command "${baseCmd}" is not allowed.`,
+        stdout: '',
+        stderr: '',
+      };
     }
     try {
       const { stdout, stderr } = await execAsync(command);
-      return { stdout: stdout.trim(), stderr: stderr.trim() };
+      return {
+        stdout: stdout.trim(),
+        stderr: stderr.trim(),
+      };
     } catch (err: any) {
       // execAsync throws on non‑zero exit or timeout
       return {
@@ -46,8 +56,8 @@ const bashTool = tool({
         stderr: (err.stderr ?? '').trim(),
       };
     }
-  },
-});
+  }) as any,
+} as any);
 
 export async function POST(request: Request) {
   try {
@@ -61,7 +71,7 @@ export async function POST(request: Request) {
     // Build conversation history from all messages except the last
     const history = messages
       .slice(0, -1)
-      .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+      .map((m: any) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
       .join('\n');
 
     // The last message is the new prompt
@@ -75,7 +85,7 @@ export async function POST(request: Request) {
       baseURL: cfg.baseURL,
       apiKey: cfg.apiKey,
     });
-    const model = provider(cfg.model, { maxRetries: 0 });
+    const model = provider(cfg.model);
 
     const config = loadChatletsConfig();
     const bashPrompt = getBashCommandsPrompt(config);
@@ -87,17 +97,17 @@ export async function POST(request: Request) {
       instructions,
       tools: { bash: bashTool },
       maxSteps: 5,
-    });
+    } as any);
 
     // Extract text and tool outputs from steps
-    const lastStep = result.steps?.[result.steps.length - 1];
+    const lastStep = (result.steps as any)?.[result.steps.length - 1];
     const text = lastStep?.content
       ?.filter((c: any) => c.type === 'text')
       .map((c: any) => c.text ?? '')
       .join('') ?? '';
 
     const toolOutputs: any[] = [];
-    for (const step of result.steps ?? []) {
+    for (const step of (result.steps as any) ?? []) {
       for (const item of step.content ?? []) {
         if (item.type === 'tool-result') {
           toolOutputs.push(item.output ?? {});

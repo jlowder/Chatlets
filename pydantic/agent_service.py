@@ -18,7 +18,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 # Add parent directory to path for shared config loader
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from shared.config_loader import load_chatlets_config, get_bash_commands_prompt
 
 # Pydantic AI imports
@@ -29,13 +29,11 @@ from pydantic_ai.providers.openai import OpenAIProvider
 app = Flask(__name__)
 CORS(app)
 
-CONFIG_PATH = Path(__file__).parent / "config.json"
 AGENT_PORT = int(__import__("os").environ.get("AGENT_PORT", 5008))
 
 
 def load_config():
-    with open(CONFIG_PATH) as f:
-        return json.load(f)
+    return load_chatlets_config()
 
 
 class ChatDeps:
@@ -46,16 +44,28 @@ class ChatDeps:
 
 async def bash_tool(ctx: RunContext[ChatDeps], command: str) -> str:
     """Execute a bash command respecting the allow list."""
+    import shlex
     cmd = command.strip().strip('"').strip("'").strip()
-    cmd_name = cmd.split()[0] if cmd else ""
+    if not cmd:
+        return json.dumps({"error": "Empty command"})
+
+    try:
+        args = shlex.split(cmd)
+    except Exception as e:
+        return json.dumps({"error": f"Failed to parse command: {str(e)}"})
+
+    if not args:
+        return json.dumps({"error": "Empty command"})
+
+    cmd_name = args[0]
 
     if not ctx.deps.allow_all and cmd_name not in ctx.deps.allow_list:
         return json.dumps({"error": f"Command '{cmd_name}' not allowed"})
 
     try:
         result = subprocess.run(
-            cmd,
-            shell=True,
+            args,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=30
@@ -178,5 +188,5 @@ def chat():
 
 if __name__ == "__main__":
     print(f"Starting Pydantic AI Agent Service on http://localhost:{AGENT_PORT}")
-    print(f"Config: {CONFIG_PATH}")
+    print("Config: Shared Config Loader")
     app.run(host="0.0.0.0", port=AGENT_PORT)

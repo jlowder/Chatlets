@@ -16,7 +16,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 # Add parent directory to path for shared config loader
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from shared.config_loader import load_chatlets_config, get_bash_commands_prompt
 
 # Try importing agno, fall back gracefully
@@ -33,23 +33,11 @@ app = Flask(__name__)
 CORS(app)
 
 # --- Configuration ---
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
 
 def load_config():
-    """Load LLM and tool configuration from config.json."""
-    try:
-        with open(CONFIG_PATH, "r") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {
-            "provider": "YOUR_PROVIDER",
-            "baseURL": "http://localhost:8080/v1",
-            "apiKey": "example",
-            "model": "openai-compatible:modelName",
-            "allowList": ["ls", "pwd"],
-            "allowAll": False,
-        }
+    """Load LLM and tool configuration using shared config loader."""
+    return load_chatlets_config()
 
 
 # --- Bash Tool ---
@@ -59,13 +47,32 @@ ALLOW_ALL = False
 
 def bash_tool(command: str, run_context=None) -> str:
     """Execute a bash command. ONLY use when the user explicitly asks to run a shell command, check system info, or list files."""
+    import shlex
     # Allow list check
     global ALLOW_LIST, ALLOW_ALL
     cfg = load_config()
     ALLOW_LIST = cfg.get("allowList", ["ls", "pwd"])
     ALLOW_ALL = cfg.get("allowAll", False)
 
-    base_cmd = command.strip().split()[0] if command.strip() else ""
+    cmd = command.strip().strip('"').strip("'").strip()
+    if not cmd:
+        return json.dumps(
+            {"error": "Empty command", "stdout": "", "stderr": ""}
+        )
+
+    try:
+        args = shlex.split(cmd)
+    except Exception as e:
+        return json.dumps(
+            {"error": f"Failed to parse command: {str(e)}", "stdout": "", "stderr": ""}
+        )
+
+    if not args:
+        return json.dumps(
+            {"error": "Empty command", "stdout": "", "stderr": ""}
+        )
+
+    base_cmd = args[0]
     if base_cmd not in ALLOW_LIST and not ALLOW_ALL:
         return json.dumps(
             {"error": f"Command '{base_cmd}' not allowed", "stdout": "", "stderr": ""}
@@ -73,7 +80,7 @@ def bash_tool(command: str, run_context=None) -> str:
 
     try:
         result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=30
+            args, shell=False, capture_output=True, text=True, timeout=30
         )
         output = {"stdout": result.stdout.strip(), "stderr": result.stderr.strip()}
         if result.returncode != 0:
@@ -237,6 +244,6 @@ def chat():
 if __name__ == "__main__":
     port = int(os.environ.get("AGENT_PORT", 8081))
     print(f"Starting Agno Agent Service on http://localhost:{port}")
-    print(f"Config: {CONFIG_PATH}")
+    print("Config: Shared Config Loader")
     print(f"Agno available: {AGNO_AVAILABLE}")
     app.run(host="0.0.0.0", port=port, debug=False)
