@@ -64,6 +64,7 @@ class BashTool(BaseTool):
     def _run(self, command: str) -> str:
         """Execute a bash command on the server."""
         import shlex
+        import re
         # Allow list check
         cfg = load_config()
         allow_list = cfg.get("allowList", ["ls", "pwd"])
@@ -74,6 +75,17 @@ class BashTool(BaseTool):
         cmd = command.strip().strip('"').strip("'").strip()
         if not cmd:
             output = {"error": "Empty command", "stdout": "", "stderr": ""}
+            if outputs_list is not None:
+                outputs_list.append(output)
+            return json.dumps(output)
+
+        # Block shell operators / chaining to prevent confusion and injection attempts
+        if re.search(r"[&;|<>$`\n\r]", cmd):
+            output = {
+                "error": "Shell operators or chained commands (like &&, ;, |, <, >, $, `) are not allowed",
+                "stdout": "",
+                "stderr": "",
+            }
             if outputs_list is not None:
                 outputs_list.append(output)
             return json.dumps(output)
@@ -169,6 +181,7 @@ def create_agent():
         llm=llm,
         tools=[bash_tool],
         max_iter=5,
+        max_execution_time=60,
         verbose=False,
     )
     
