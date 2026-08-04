@@ -210,13 +210,21 @@ def chat():
                         tool_call_id=tool_call_id,
                         content=json.dumps(tout)
                     ))
+
+                # If assistant content is empty or whitespace, use a placeholder
+                ast_content = content.strip() if content else ""
+                if not ast_content:
+                    ast_content = "[Executed bash tool command]"
+
                 agno_messages.append(AgnoMessage(
                     role="assistant",
-                    content=content or None,
+                    content=ast_content,
                     tool_calls=tool_calls
                 ))
                 agno_messages.extend(tool_messages)
             else:
+                if role == "assistant" and (not content or not content.strip()):
+                    content = "[Executed bash tool command]"
                 agno_messages.append(AgnoMessage(role=role, content=content))
 
         agent = create_agent()

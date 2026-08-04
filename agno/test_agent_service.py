@@ -139,6 +139,39 @@ class TestAgentService(unittest.TestCase):
         self.assertEqual(len(data["toolOutputs"]), 1)
         self.assertEqual(data["toolOutputs"][0]["error"], "Command 'who' not allowed")
 
+    @patch('agent_service.Agent')
+    def test_chat_empty_assistant_message_mapping(self, mock_agent_class):
+        mock_agent_instance = MagicMock()
+        mock_agent_class.return_value = mock_agent_instance
+
+        # Mock result
+        mock_result = MagicMock()
+        mock_result.content = "Response"
+        mock_result.messages = []
+        mock_agent_instance.run.return_value = mock_result
+
+        # Input messages containing empty/whitespace assistant message
+        payload = {
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "  "}, # empty/whitespace
+                {"role": "user", "content": "ls -lah"}
+            ]
+        }
+
+        response = self.app.post('/chat',
+                                 data=json.dumps(payload),
+                                 content_type='application/json')
+
+        self.assertEqual(response.status_code, 200)
+
+        # Verify that the mapped message had the placeholder content
+        called_args, called_kwargs = mock_agent_instance.run.call_args
+        agno_messages = called_kwargs["input"]
+        self.assertEqual(len(agno_messages), 3)
+        self.assertEqual(agno_messages[1].role, "assistant")
+        self.assertEqual(agno_messages[1].content, "[Executed bash tool command]")
+
     def test_bash_tool_blocks_chained_commands(self):
         from agent_service import bash_tool
 
