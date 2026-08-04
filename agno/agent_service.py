@@ -177,10 +177,38 @@ def chat():
 
         # Convert messages format to list of Agno Message objects
         agno_messages = []
-        for m in messages:
+        for idx, m in enumerate(messages):
             role = m.get("role")
             content = m.get("content")
-            agno_messages.append(AgnoMessage(role=role, content=content))
+            tool_outputs_list = m.get("toolOutputs")
+
+            if role == "assistant" and tool_outputs_list:
+                # Map nested toolOutputs to structured tool_calls and tool messages
+                tool_calls = []
+                tool_messages = []
+                for t_idx, tout in enumerate(tool_outputs_list):
+                    tool_call_id = f"call_{idx}_{t_idx}"
+                    tool_calls.append({
+                        "id": tool_call_id,
+                        "type": "function",
+                        "function": {
+                            "name": "bash_tool",
+                            "arguments": json.dumps({"command": tout.get("command", "")})
+                        }
+                    })
+                    tool_messages.append(AgnoMessage(
+                        role="tool",
+                        tool_call_id=tool_call_id,
+                        content=json.dumps(tout)
+                    ))
+                agno_messages.append(AgnoMessage(
+                    role="assistant",
+                    content=content or None,
+                    tool_calls=tool_calls
+                ))
+                agno_messages.extend(tool_messages)
+            else:
+                agno_messages.append(AgnoMessage(role=role, content=content))
 
         agent = create_agent()
 
