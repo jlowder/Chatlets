@@ -244,6 +244,6 @@ def chat():
 if __name__ == "__main__":
     port = int(os.environ.get("AGENT_PORT", 8081))
     print(f"Starting Agno Agent Service on http://localhost:{port}")
-    print(f"Config: {CONFIG_PATH}")
+    print("Config: Shared Config Loader")
     print(f"Agno available: {AGNO_AVAILABLE}")
     app.run(host="0.0.0.0", port=port, debug=False)

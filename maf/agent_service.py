@@ -202,5 +202,5 @@ def chat():
 
 if __name__ == "__main__":
     print(f"Starting Microsoft Agent Framework Agent Service on http://localhost:{AGENT_PORT}")
-    print(f"Config: {CONFIG_PATH}")
+    print("Config: Shared Config Loader")
     app.run(host="0.0.0.0", port=AGENT_PORT)
