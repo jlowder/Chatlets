@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 const BACKEND_MAP: Record<string, string> = {
   'vercel-ai': 'http://localhost:4000/api/chat',
   agno: 'http://localhost:3001/api/chat',
-  crewai: 'http://localhost:5000/chat',
+  crewai: 'http://localhost:3002/api/chat',
   langchain: 'http://localhost:5001/api/chat',
   langgraph: 'http://localhost:5002/api/chat',
   liw: 'http://localhost:5003/api/chat',

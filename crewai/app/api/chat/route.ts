@@ -2,12 +2,12 @@ import { NextResponse } from 'next/server';
 
 /**
  * API proxy to CrewAI Flask agent service.
- * Forwards to http://localhost:5000/chat
+ * Forwards to http://localhost:5012/chat
  */
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const res = await fetch('http://localhost:5000/chat', {
+    const res = await fetch('http://localhost:5012/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

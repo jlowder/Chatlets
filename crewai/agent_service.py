@@ -5,7 +5,7 @@ This service is called by the Next.js API route.
 Usage:
     python agent_service.py
 
-Runs on http://localhost:5000
+Runs on http://localhost:5012
 """
 
 import json
@@ -274,7 +274,7 @@ def chat():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("CREWAI_PORT", 5000))
+    port = int(os.environ.get("CREWAI_PORT", 5012))
     print(f"Starting CrewAI Agent Service on http://localhost:{port}")
     print("Config: Shared Config Loader")
     print(f"CrewAI available: {CREWAI_AVAILABLE}")
