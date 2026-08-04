@@ -16,7 +16,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 # Add parent directory to path for shared config loader
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from shared.config_loader import load_chatlets_config, get_bash_commands_prompt
 
 # Try importing agno, fall back gracefully
