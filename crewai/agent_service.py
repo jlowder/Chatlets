@@ -181,7 +181,7 @@ def create_agent():
         llm=llm,
         tools=[bash_tool],
         max_iter=5,
-        max_execution_time=60,
+        max_execution_time=300,
         verbose=False,
     )
     
@@ -227,7 +227,10 @@ def chat():
         context_parts = []
         for m in messages[:-1]:  # All messages except the last (current) one
             role_label = "user" if m["role"] == "user" else "assistant"
-            context_parts.append(f"{role_label}: {m['content']}")
+            content = m["content"].strip()
+            if not content and m["role"] == "assistant":
+                content = "[Executed bash tool command]"
+            context_parts.append(f"{role_label}: {content}")
         context = "\n".join(context_parts) if context_parts else None
 
         # The last message is the current prompt
