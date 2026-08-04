@@ -3,13 +3,15 @@ import json
 import subprocess
 import asyncio
 import sys
+import hashlib
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Sequence
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pydantic import Field
-from agent_framework import Agent, FunctionInvocationContext, tool
+from agent_framework import Agent, FunctionInvocationContext, tool, Message
 from agent_framework.openai import OpenAIChatClient
+from agent_framework._sessions import AgentSession
 
 # Add parent directory to path for shared config loader
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -89,60 +91,96 @@ def bash(command: Annotated[str, Field(description="The shell command to execute
     return bash_execute_fn(command)
 
 
-async def run_agent(messages: list) -> dict:
-    """Run the agent with the given messages and return the result."""
+# Module-level caches for agent and sessions
+_agent_cache = None
+_last_config = None
+_session_cache = {}
+
+
+def get_agent() -> Agent:
+    """Retrieve or create the cached Agent instance based on current config."""
+    global _agent_cache, _last_config
     cfg = load_config()
 
-    # Create client with OpenAI-compatible settings
-    client = OpenAIChatClient(
-        base_url=cfg["baseURL"],
-        api_key=cfg["apiKey"],
-        model=cfg["model"],
-    )
+    # Check if the active configuration has changed
+    config_key = (cfg.get("baseURL"), cfg.get("apiKey"), cfg.get("model"))
+    if _agent_cache is None or _last_config != config_key:
+        client = OpenAIChatClient(
+            base_url=cfg["baseURL"],
+            api_key=cfg["apiKey"],
+            model=cfg["model"],
+        )
 
-    # Build dynamic bash instructions from shared config
-    config = load_chatlets_config()
-    bash_prompt = get_bash_commands_prompt(config)
+        config = load_chatlets_config()
+        bash_prompt = get_bash_commands_prompt(config)
 
-    # Create agent with tools
-    agent = client.as_agent(
-        name="ChatletAgent",
-        instructions=f"You are a helpful assistant. {bash_prompt} Answer questions directly from your knowledge whenever possible. Do NOT use bash for general knowledge questions, math, definitions, explanations, or factual queries.",
-        tools=[bash],
-    )
+        agent = client.as_agent(
+            name="ChatletAgent",
+            instructions=(
+                f"You are a helpful assistant. {bash_prompt} "
+                "Answer questions directly from your knowledge whenever possible. "
+                "Do NOT use bash for general knowledge questions, math, definitions, "
+                "explanations, or factual queries."
+            ),
+            tools=[bash],
+        )
+        _agent_cache = agent
+        _last_config = config_key
+        # Clear session cache when agent is recreated to avoid mismatch
+        _session_cache.clear()
 
-    # Build conversation history
-    user_messages = []
-    for m in messages:
-        if m["role"] == "user":
-            user_messages.append(f"User: {m['content']}")
-        elif m["role"] == "assistant":
-            user_messages.append(f"Assistant: {m['content']}")
+    return _agent_cache
+
+
+def get_session_id(messages: list) -> str:
+    """Generate a deterministic session ID from the first user message."""
+    if not messages:
+        return "default_session"
+    first_msg = messages[0]
+    content = first_msg.get("content", "")
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def get_session(agent: Agent, session_id: str) -> AgentSession:
+    """Retrieve or create a cached AgentSession on the server."""
+    if session_id not in _session_cache:
+        _session_cache[session_id] = agent.create_session(session_id=session_id)
+    return _session_cache[session_id]
+
+
+async def run_agent(messages: list) -> dict:
+    """Run the agent with the given messages and return the result."""
+    agent = get_agent()
+    session_id = get_session_id(messages)
+    session = get_session(agent, session_id)
+
+    # Convert all but the last message to MAF Message objects for session history
+    formatted_history = []
+    for m in messages[:-1]:
+        formatted_history.append(Message(role=m["role"], contents=[m["content"]]))
+
+    # Synchronize the session's in-memory history with the client's message history
+    session.state.setdefault("in_memory", {})["messages"] = formatted_history
 
     # The last message is the current prompt
-    history = "\n".join(user_messages[:-1]) if len(user_messages) > 1 else ""
-    current_prompt = user_messages[-1].replace("User: ", "") if user_messages else ""
+    last_msg = messages[-1]
+    current_prompt = Message(role=last_msg["role"], contents=[last_msg["content"]])
 
-    if history:
-        full_prompt = f"Previous conversation:\n{history}\n\n{current_prompt}"
-    else:
-        full_prompt = current_prompt
+    # Run the agent natively with current prompt and the session
+    result = await agent.run(current_prompt, session=session)
 
-    # Run the agent
-    result = await agent.run(full_prompt)
+    # Use public .to_dict() and .text property to avoid private introspection coupling
+    res_dict = result.to_dict()
+    text = result.text or ""
 
-    # Extract tool outputs and text from result.messages
+    # Extract tool outputs using public to_dict serialization format
     tool_outputs = []
-    text = ""
-    for msg in result.messages:
-        contents = getattr(msg, 'contents', None) if hasattr(msg, 'contents') else None
-        if not contents:
-            continue
-        for ci in contents:
-            ci_type = getattr(ci, 'type', None)
-            if ci_type == 'function_result':
-                # Tool output: parse the result attribute as JSON
-                raw_result = getattr(ci, 'result', None)
+    messages_data = res_dict.get("messages", [])
+    for msg in messages_data:
+        contents = msg.get("contents", [])
+        for content in contents:
+            if content.get("type") == "function_result":
+                raw_result = content.get("result")
                 if raw_result:
                     try:
                         parsed = json.loads(raw_result) if isinstance(raw_result, str) else raw_result
@@ -153,11 +191,6 @@ async def run_agent(messages: list) -> dict:
                         })
                     except (json.JSONDecodeError, AttributeError):
                         pass
-            elif ci_type == 'text':
-                # Response text — keep last non-empty one
-                ci_text = getattr(ci, 'text', None)
-                if ci_text:
-                    text = ci_text
 
     # Suppress text when tools were used (the prose is redundant with toolOutputs)
     return {
