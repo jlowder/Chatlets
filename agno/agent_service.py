@@ -23,9 +23,11 @@ from shared.config_loader import load_chatlets_config, get_bash_commands_prompt
 try:
     from agno.agent import Agent
     from agno.models.openai.like import OpenAILike
+    from agno.models.message import Message as AgnoMessage
     AGNO_AVAILABLE = True
 except ImportError as e:
     AGNO_AVAILABLE = False
+    AgnoMessage = None
     print(f"WARNING: agno not installed or import failed: {e}")
     print("Install with: pip install -r requirements.txt")
 
@@ -164,17 +166,20 @@ def chat():
             if not last.strip():
                 return jsonify({"error": "Prompt cannot be empty"}), 400
 
-        # Build full conversation from all messages
-        conversation_parts = []
+        if not AGNO_AVAILABLE:
+            raise RuntimeError("agno package is not installed. Run: pip install -r requirements.txt")
+
+        # Convert messages format to list of Agno Message objects
+        agno_messages = []
         for m in messages:
-            role_label = "User" if m["role"] == "user" else "Assistant"
-            conversation_parts.append(f"{role_label}: {m['content']}")
-        full_conversation = "\n".join(conversation_parts)
+            role = m.get("role")
+            content = m.get("content")
+            agno_messages.append(AgnoMessage(role=role, content=content))
 
         agent = create_agent()
 
-        # Pass full conversation as input so the model sees prior context
-        result = agent.run(input=full_conversation)
+        # Pass structured message list as input so the model sees proper conversation history
+        result = agent.run(input=agno_messages)
 
         # Debug: show the full message history sent to LLM
         print("=== FULL LLM CONTEXT ===", flush=True)
