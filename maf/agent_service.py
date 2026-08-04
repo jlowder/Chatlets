@@ -37,16 +37,28 @@ class BashTool:
 
     def execute(self, command: str) -> str:
         """Execute a bash command with allow-list enforcement and timeout."""
-        cmd = command.strip()
-        cmd_name = cmd.split()[0] if cmd else ""
+        import shlex
+        cmd = command.strip().strip('"').strip("'").strip()
+        if not cmd:
+            return json.dumps({"error": "Empty command"})
+
+        try:
+            args = shlex.split(cmd)
+        except Exception as e:
+            return json.dumps({"error": f"Failed to parse command: {str(e)}"})
+
+        if not args:
+            return json.dumps({"error": "Empty command"})
+
+        cmd_name = args[0]
 
         if not self.allow_all and cmd_name not in self.allow_list:
             return json.dumps({"error": f"Command '{cmd_name}' not allowed"})
 
         try:
             result = subprocess.run(
-                cmd,
-                shell=True,
+                args,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=30

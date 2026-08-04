@@ -73,12 +73,31 @@ class BashTool(BaseTool):
     
     def _run(self, command: str) -> str:
         """Execute a bash command on the server."""
+        import shlex
         # Allow list check
         cfg = load_config()
         allow_list = cfg.get("allowList", ["ls", "pwd"])
         allow_all = cfg.get("allowAll", False)
         
-        base_cmd = command.strip().split()[0] if command.strip() else ""
+        cmd = command.strip().strip('"').strip("'").strip()
+        if not cmd:
+            output = {"error": "Empty command", "stdout": "", "stderr": ""}
+            _captured_tool_outputs.append(output)
+            return json.dumps(output)
+
+        try:
+            args = shlex.split(cmd)
+        except Exception as e:
+            output = {"error": f"Failed to parse command: {str(e)}", "stdout": "", "stderr": ""}
+            _captured_tool_outputs.append(output)
+            return json.dumps(output)
+
+        if not args:
+            output = {"error": "Empty command", "stdout": "", "stderr": ""}
+            _captured_tool_outputs.append(output)
+            return json.dumps(output)
+
+        base_cmd = args[0]
         if base_cmd not in allow_list and not allow_all:
             output = {
                 "error": f"Command '{base_cmd}' not allowed",
@@ -90,7 +109,7 @@ class BashTool(BaseTool):
         
         try:
             result = subprocess.run(
-                command, shell=True, capture_output=True, text=True, timeout=30
+                args, shell=False, capture_output=True, text=True, timeout=30
             )
             output = {"stdout": result.stdout.strip(), "stderr": result.stderr.strip()}
             if result.returncode != 0:

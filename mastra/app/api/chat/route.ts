@@ -3,11 +3,61 @@ import { Agent } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
 import { createOpenAI } from '@ai-sdk/openai';
 import { z } from 'zod';
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execFile } from 'node:child_process';
 import { loadChatletsConfig, getBashCommandsPrompt } from '../../../../shared/config-loader';
 
-const execAsync = promisify(exec);
+function tokenize(command: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let inDoubleQuotes = false;
+  let inSingleQuotes = false;
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i];
+    if (char === '"' && !inSingleQuotes) {
+      inDoubleQuotes = !inDoubleQuotes;
+    } else if (char === "'" && !inDoubleQuotes) {
+      inSingleQuotes = !inSingleQuotes;
+    } else if (char === " " && !inDoubleQuotes && !inSingleQuotes) {
+      if (current) {
+        args.push(current);
+        current = "";
+      }
+    } else {
+      current += char;
+    }
+  }
+  if (current) {
+    args.push(current);
+  }
+  return args;
+}
+
+const execAsync = (command: string, timeout = 30000): Promise<{ stdout: string; stderr: string }> => {
+  return new Promise((resolve, reject) => {
+    const cmd = command.trim();
+    if (!cmd) {
+      return reject(new Error('Empty command'));
+    }
+
+    const args = tokenize(cmd);
+    if (args.length === 0) {
+      return reject(new Error('Empty command'));
+    }
+
+    const cmdName = args[0];
+
+    execFile(cmdName, args.slice(1), { timeout }, (error, stdout, stderr) => {
+      if (error) {
+        const errWithOutputs = Object.assign(error, { stdout, stderr });
+        if ((error as any).killed && (error as any).signal === 'SIGTERM') {
+          errWithOutputs.message = 'Command timed out';
+        }
+        return reject(errWithOutputs);
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+};
 
 const bashTool = createTool({
   id: 'bash',
@@ -20,7 +70,9 @@ const bashTool = createTool({
     console.log('command:', command);
     const cfg = loadChatletsConfig();
     const cmd = command.trim();
-    const cmdName = cmd.split(/\s+/)[0] || '';
+
+    const args = tokenize(cmd);
+    const cmdName = args[0] ?? '';
 
     const allowAll = cfg.allowAll ?? false;
     const allowList = cfg.allowList ?? ['ls', 'pwd'];
@@ -35,7 +87,7 @@ const bashTool = createTool({
     }
 
     try {
-      const { stdout, stderr } = await execAsync(cmd, { timeout: 30000 });
+      const { stdout, stderr } = await execAsync(cmd, 30000);
       console.log('execAsync success:', { stdout, stderr });
       return {
         stdout: stdout.trim(),

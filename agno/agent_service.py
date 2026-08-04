@@ -59,13 +59,32 @@ ALLOW_ALL = False
 
 def bash_tool(command: str, run_context=None) -> str:
     """Execute a bash command. ONLY use when the user explicitly asks to run a shell command, check system info, or list files."""
+    import shlex
     # Allow list check
     global ALLOW_LIST, ALLOW_ALL
     cfg = load_config()
     ALLOW_LIST = cfg.get("allowList", ["ls", "pwd"])
     ALLOW_ALL = cfg.get("allowAll", False)
 
-    base_cmd = command.strip().split()[0] if command.strip() else ""
+    cmd = command.strip().strip('"').strip("'").strip()
+    if not cmd:
+        return json.dumps(
+            {"error": "Empty command", "stdout": "", "stderr": ""}
+        )
+
+    try:
+        args = shlex.split(cmd)
+    except Exception as e:
+        return json.dumps(
+            {"error": f"Failed to parse command: {str(e)}", "stdout": "", "stderr": ""}
+        )
+
+    if not args:
+        return json.dumps(
+            {"error": "Empty command", "stdout": "", "stderr": ""}
+        )
+
+    base_cmd = args[0]
     if base_cmd not in ALLOW_LIST and not ALLOW_ALL:
         return json.dumps(
             {"error": f"Command '{base_cmd}' not allowed", "stdout": "", "stderr": ""}
@@ -73,7 +92,7 @@ def bash_tool(command: str, run_context=None) -> str:
 
     try:
         result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=30
+            args, shell=False, capture_output=True, text=True, timeout=30
         )
         output = {"stdout": result.stdout.strip(), "stderr": result.stderr.strip()}
         if result.returncode != 0:

@@ -5,22 +5,59 @@ import { MemorySaver } from '@langchain/langgraph';
 import { HumanMessage, AIMessage, ToolMessage, SystemMessage } from '@langchain/core/messages';
 import { StructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { createHash } from 'crypto';
 import { loadChatletsConfig, getBashCommandsPrompt } from '../../../../shared/config-loader';
 
+function tokenize(command: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let inDoubleQuotes = false;
+  let inSingleQuotes = false;
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i];
+    if (char === '"' && !inSingleQuotes) {
+      inDoubleQuotes = !inDoubleQuotes;
+    } else if (char === "'" && !inDoubleQuotes) {
+      inSingleQuotes = !inSingleQuotes;
+    } else if (char === " " && !inDoubleQuotes && !inSingleQuotes) {
+      if (current) {
+        args.push(current);
+        current = "";
+      }
+    } else {
+      current += char;
+    }
+  }
+  if (current) {
+    args.push(current);
+  }
+  return args;
+}
+
 const execAsync = (command: string, timeout = 30000): Promise<{ stdout: string; stderr: string }> => {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error('Command timed out'));
-    }, timeout);
-    exec(command, { timeout }, (error, stdout, stderr) => {
-      clearTimeout(timer);
+    const cmd = command.trim();
+    if (!cmd) {
+      return reject(new Error('Empty command'));
+    }
+
+    const args = tokenize(cmd);
+    if (args.length === 0) {
+      return reject(new Error('Empty command'));
+    }
+
+    const cmdName = args[0];
+
+    execFile(cmdName, args.slice(1), { timeout }, (error, stdout, stderr) => {
       if (error) {
-        reject(error);
-      } else {
-        resolve({ stdout, stderr });
+        const errWithOutputs = Object.assign(error, { stdout, stderr });
+        if ((error as any).killed && (error as any).signal === 'SIGTERM') {
+          errWithOutputs.message = 'Command timed out';
+        }
+        return reject(errWithOutputs);
       }
+      resolve({ stdout, stderr });
     });
   });
 };
@@ -33,7 +70,9 @@ class BashTool extends StructuredTool {
   async _call(input: { command: string }): Promise<string> {
     const cfg = loadChatletsConfig();
     const cmd = input.command.trim();
-    const cmdName = cmd.split(/\s+/)[0];
+
+    const args = tokenize(cmd);
+    const cmdName = args[0] ?? '';
 
     if (!cfg.allowAll && cfg.allowList && !cfg.allowList.includes(cmdName)) {
       return JSON.stringify({ error: `Command '${cmdName}' not allowed` });
@@ -41,11 +80,20 @@ class BashTool extends StructuredTool {
 
     try {
       const { stdout, stderr } = await execAsync(cmd);
-      if (stderr) return JSON.stringify({ stdout: stdout.trim(), stderr: stderr.trim() });
-      return JSON.stringify({ stdout: stdout.trim() });
+      const out: Record<string, string> = { stdout: stdout.trim() };
+      if (stderr.trim()) {
+        out.stderr = stderr.trim();
+      }
+      return JSON.stringify(out);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
-      return JSON.stringify({ error: msg });
+      const stdout = (err as any).stdout ?? '';
+      const stderr = (err as any).stderr ?? '';
+      return JSON.stringify({
+        error: msg,
+        stdout: stdout.trim(),
+        stderr: stderr.trim(),
+      });
     }
   }
 }

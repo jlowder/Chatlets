@@ -46,16 +46,28 @@ class ChatDeps:
 
 async def bash_tool(ctx: RunContext[ChatDeps], command: str) -> str:
     """Execute a bash command respecting the allow list."""
+    import shlex
     cmd = command.strip().strip('"').strip("'").strip()
-    cmd_name = cmd.split()[0] if cmd else ""
+    if not cmd:
+        return json.dumps({"error": "Empty command"})
+
+    try:
+        args = shlex.split(cmd)
+    except Exception as e:
+        return json.dumps({"error": f"Failed to parse command: {str(e)}"})
+
+    if not args:
+        return json.dumps({"error": "Empty command"})
+
+    cmd_name = args[0]
 
     if not ctx.deps.allow_all and cmd_name not in ctx.deps.allow_list:
         return json.dumps({"error": f"Command '{cmd_name}' not allowed"})
 
     try:
         result = subprocess.run(
-            cmd,
-            shell=True,
+            args,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=30

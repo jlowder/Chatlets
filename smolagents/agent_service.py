@@ -54,10 +54,43 @@ def bash_tool(command: str) -> str:
     Args:
         command: The shell command to execute. Only 'ls' and 'pwd' are permitted.
     """
+    import shlex
     cfg = load_config()
 
     cmd = command.strip().strip('"').strip("'").strip()
-    cmd_name = cmd.split()[0] if cmd else ""
+    if not cmd:
+        err_msg = "Empty command"
+        try:
+            outputs_list = _current_tool_outputs.get()
+            if outputs_list is not None:
+                outputs_list.append({"error": err_msg})
+        except LookupError:
+            pass
+        return json.dumps({"error": err_msg})
+
+    try:
+        args = shlex.split(cmd)
+    except Exception as e:
+        err_msg = f"Failed to parse command: {str(e)}"
+        try:
+            outputs_list = _current_tool_outputs.get()
+            if outputs_list is not None:
+                outputs_list.append({"error": err_msg})
+        except LookupError:
+            pass
+        return json.dumps({"error": err_msg})
+
+    if not args:
+        err_msg = "Empty command"
+        try:
+            outputs_list = _current_tool_outputs.get()
+            if outputs_list is not None:
+                outputs_list.append({"error": err_msg})
+        except LookupError:
+            pass
+        return json.dumps({"error": err_msg})
+
+    cmd_name = args[0]
 
     if not cfg.get("allowAll", False) and cmd_name not in cfg.get("allowList", ["ls", "pwd"]):
         err_msg = f"Command '{cmd_name}' not allowed"
@@ -71,8 +104,8 @@ def bash_tool(command: str) -> str:
 
     try:
         result = subprocess.run(
-            cmd,
-            shell=True,
+            args,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=30
