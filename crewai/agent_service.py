@@ -189,6 +189,8 @@ def chat():
     Expected JSON body: {"messages": [{"role": "user"|"assistant", "content": "..."}]}
     Returns: {"text": "...", "toolOutputs": [...]}
     """
+    import time
+    print(f"\n[crewai agent_service] /chat requested at {time.strftime('%H:%M:%S')}", flush=True)
     try:
         data = request.get_json()
         if not data:
@@ -263,9 +265,11 @@ def chat():
         if tool_outputs:
             text = ""
         
+        print(f"[crewai agent_service] /chat completed successfully with {len(tool_outputs)} tool outputs", flush=True)
         return jsonify({"text": text, "toolOutputs": tool_outputs})
         
     except RuntimeError as e:
+        print(f"[crewai agent_service] /chat RuntimeError: {e}", flush=True)
         return jsonify({"error": str(e), "text": "", "toolOutputs": []}), 500
     except Exception as e:
         import traceback
