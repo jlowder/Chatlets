@@ -95,7 +95,7 @@ class TestAgentService(unittest.TestCase):
             {"role": "user", "content": "run: ls"},
             {
                 "role": "assistant",
-                "content": "List of files: file1.txt",
+                "content": "",
                 "toolOutputs": [{"stdout": "file1.txt", "stderr": "", "command": "run: ls"}]
             },
             {"role": "user", "content": "run: who"}
@@ -108,8 +108,7 @@ class TestAgentService(unittest.TestCase):
         # Build the exact same AgnoMessage list that the endpoint will build
         parsed_history = [
             AgnoMessage(role="user", content="run: ls"),
-            AgnoMessage(role="assistant", content="List of files: file1.txt", tool_calls=[{"id": "call_1_0"}]),
-            AgnoMessage(role="tool", tool_call_id="call_1_0", content='{"stdout": "file1.txt", "stderr": "", "command": "run: ls"}'),
+            AgnoMessage(role="assistant", content="file1.txt"),
             AgnoMessage(role="user", content="run: who")
         ]
 
@@ -117,7 +116,6 @@ class TestAgentService(unittest.TestCase):
             parsed_history[0],
             parsed_history[1],
             parsed_history[2],
-            parsed_history[3],
             # Newly generated messages in this turn
             AgnoMessage(role="tool", content='{"error": "Command \'who\' not allowed", "stdout": "", "stderr": ""}'),
             AgnoMessage(role="assistant", content="Command 'who' not allowed")

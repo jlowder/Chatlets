@@ -140,8 +140,8 @@ def create_agent():
     - If the user asks a question that can be answered without executing a shell command, you MUST answer it directly and MUST NOT call the bash tool.
     - If you don't know the answer, say so. Do not guess and do not use tools to find out.""",
         tool_call_limit=5,
-        add_session_state_to_context=True,
-        add_history_to_context=True,
+        add_session_state_to_context=False,
+        add_history_to_context=False,
         stream=False,
         debug_mode=False,
     )
@@ -184,47 +184,30 @@ def chat():
         if not AGNO_AVAILABLE:
             raise RuntimeError("agno package is not installed. Run: pip install -r requirements.txt")
 
-        # Convert messages format to list of Agno Message objects
+        # Convert messages format to list of Agno Message objects with alternating user and assistant roles
         agno_messages = []
         for idx, m in enumerate(messages):
             role = m.get("role")
-            content = m.get("content")
+            content = m.get("content", "")
             tool_outputs_list = m.get("toolOutputs")
 
-            if role == "assistant" and tool_outputs_list:
-                # Map nested toolOutputs to structured tool_calls and tool messages
-                tool_calls = []
-                tool_messages = []
-                for t_idx, tout in enumerate(tool_outputs_list):
-                    tool_call_id = f"call_{idx}_{t_idx}"
-                    tool_calls.append({
-                        "id": tool_call_id,
-                        "type": "function",
-                        "function": {
-                            "name": "bash_tool",
-                            "arguments": json.dumps({"command": tout.get("command", "")})
-                        }
-                    })
-                    tool_messages.append(AgnoMessage(
-                        role="tool",
-                        tool_call_id=tool_call_id,
-                        content=json.dumps(tout)
-                    ))
+            if role == "assistant":
+                if tool_outputs_list:
+                    parts = []
+                    for tout in tool_outputs_list:
+                        if tout.get("stdout"):
+                            parts.append(tout["stdout"])
+                        if tout.get("stderr"):
+                            parts.append(tout["stderr"])
+                        if tout.get("error"):
+                            parts.append(tout["error"])
+                    content = "\n".join(parts).strip()
 
-                # If assistant content is empty or whitespace, use a placeholder
-                ast_content = content.strip() if content else ""
-                if not ast_content:
-                    ast_content = "[Executed bash tool command]"
-
-                agno_messages.append(AgnoMessage(
-                    role="assistant",
-                    content=ast_content,
-                    tool_calls=tool_calls
-                ))
-                agno_messages.extend(tool_messages)
-            else:
-                if role == "assistant" and (not content or not content.strip()):
+                if not content or not content.strip():
                     content = "[Executed bash tool command]"
+
+                agno_messages.append(AgnoMessage(role="assistant", content=content))
+            else:
                 agno_messages.append(AgnoMessage(role=role, content=content))
 
         agent = create_agent()
