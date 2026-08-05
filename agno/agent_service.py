@@ -23,9 +23,11 @@ from shared.config_loader import load_chatlets_config, get_bash_commands_prompt
 try:
     from agno.agent import Agent
     from agno.models.openai.like import OpenAILike
+    from agno.models.message import Message as AgnoMessage
     AGNO_AVAILABLE = True
 except ImportError as e:
     AGNO_AVAILABLE = False
+    AgnoMessage = None
     print(f"WARNING: agno not installed or import failed: {e}")
     print("Install with: pip install -r requirements.txt")
 
@@ -46,7 +48,12 @@ ALLOW_ALL = False
 
 
 def bash_tool(command: str, run_context=None) -> str:
-    """Execute a bash command. ONLY use when the user explicitly asks to run a shell command, check system info, or list files."""
+    """Execute a bash/shell command.
+
+    NEVER use this tool for general knowledge, factual questions, geography, population, weather, math, definitions, explanations, or questions that can be answered from memory.
+    ONLY call this tool when the user explicitly asks to run a shell/terminal command, check local system status, list local files, or execute a local file.
+    Do NOT attempt to run curl or network commands to lookup factual answers.
+    """
     import shlex
     # Allow list check
     global ALLOW_LIST, ALLOW_ALL
@@ -59,6 +66,15 @@ def bash_tool(command: str, run_context=None) -> str:
         return json.dumps(
             {"error": "Empty command", "stdout": "", "stderr": ""}
         )
+
+    import re
+    # Block shell operators / chaining to prevent confusion and injection attempts
+    if re.search(r"[&;|<>$`\n\r]", cmd):
+        return json.dumps({
+            "error": "Shell operators or chained commands (like &&, ;, |, <, >, $, `) are not allowed",
+            "stdout": "",
+            "stderr": "",
+        })
 
     try:
         args = shlex.split(cmd)
@@ -117,14 +133,15 @@ def create_agent():
         instructions=f"""You are a helpful assistant. {bash_prompt}
 
     IMPORTANT RULES:
-    - Answer questions directly from your knowledge whenever possible
-    - ONLY use bash tool when: the user explicitly asks to run a command, check system status, list files, read files, or perform a computation
-    - NEVER use bash for: general knowledge questions (area, population, history, facts), math, definitions, explanations
-    - If you don't know the answer, say so. Do not guess.
-    - If the user asks something that can be answered without a command, answer it directly.""",
+    - DO NOT use the bash tool under any circumstances unless the user explicitly requested a terminal/shell command to be run (e.g., 'run ls', 'execute pwd').
+    - Answer questions directly from your internal knowledge whenever possible.
+    - NEVER use the bash tool for: general knowledge, geography, population, weather, history, facts, math, definitions, or explanations.
+    - Questions like "What's the capital of India?" or "What's its population?" or "How is the weather?" are general knowledge/factual questions. You MUST answer them directly from your knowledge. DO NOT run curl or any web/shell command to look them up.
+    - If the user asks a question that can be answered without executing a shell command, you MUST answer it directly and MUST NOT call the bash tool.
+    - If you don't know the answer, say so. Do not guess and do not use tools to find out.""",
         tool_call_limit=5,
-        add_session_state_to_context=True,
-        add_history_to_context=True,
+        add_session_state_to_context=False,
+        add_history_to_context=False,
         stream=False,
         debug_mode=False,
     )
@@ -164,17 +181,39 @@ def chat():
             if not last.strip():
                 return jsonify({"error": "Prompt cannot be empty"}), 400
 
-        # Build full conversation from all messages
-        conversation_parts = []
-        for m in messages:
-            role_label = "User" if m["role"] == "user" else "Assistant"
-            conversation_parts.append(f"{role_label}: {m['content']}")
-        full_conversation = "\n".join(conversation_parts)
+        if not AGNO_AVAILABLE:
+            raise RuntimeError("agno package is not installed. Run: pip install -r requirements.txt")
+
+        # Convert messages format to list of Agno Message objects with alternating user and assistant roles
+        agno_messages = []
+        for idx, m in enumerate(messages):
+            role = m.get("role")
+            content = m.get("content", "")
+            tool_outputs_list = m.get("toolOutputs")
+
+            if role == "assistant":
+                if tool_outputs_list:
+                    parts = []
+                    for tout in tool_outputs_list:
+                        if tout.get("stdout"):
+                            parts.append(tout["stdout"])
+                        if tout.get("stderr"):
+                            parts.append(tout["stderr"])
+                        if tout.get("error"):
+                            parts.append(tout["error"])
+                    content = "\n".join(parts).strip()
+
+                if not content or not content.strip():
+                    content = "[Executed bash tool command]"
+
+                agno_messages.append(AgnoMessage(role="assistant", content=content))
+            else:
+                agno_messages.append(AgnoMessage(role=role, content=content))
 
         agent = create_agent()
 
-        # Pass full conversation as input so the model sees prior context
-        result = agent.run(input=full_conversation)
+        # Pass structured message list as input so the model sees proper conversation history
+        result = agent.run(input=agno_messages)
 
         # Debug: show the full message history sent to LLM
         print("=== FULL LLM CONTEXT ===", flush=True)
@@ -187,12 +226,27 @@ def chat():
                 print(f"[{i}] role={role} content={repr(content)}", flush=True)
         print("=== END CONTEXT ===", flush=True)
 
+        # Find the last input message in the result messages to identify newly generated messages
+        last_input_msg = agno_messages[-1] if agno_messages else None
+        last_input_idx = -1
+        if last_input_msg and hasattr(result, "messages") and result.messages:
+            for i in range(len(result.messages) - 1, -1, -1):
+                msg = result.messages[i]
+                if msg is last_input_msg or (
+                    getattr(msg, "role", None) == last_input_msg.role and
+                    getattr(msg, "content", None) == last_input_msg.content
+                ):
+                    last_input_idx = i
+                    break
+
+        new_messages = result.messages[last_input_idx + 1:] if last_input_idx != -1 and hasattr(result, "messages") else (result.messages if hasattr(result, "messages") else [])
+
         # Extract final text response from assistant messages
         text = ""
         if hasattr(result, "content") and result.content:
             text = str(result.content)
-        elif hasattr(result, "messages") and result.messages:
-            for msg in reversed(result.messages):
+        elif new_messages:
+            for msg in reversed(new_messages):
                 if getattr(msg, "role", None) == "assistant":
                     content = msg.content
                     if isinstance(content, list):
@@ -205,8 +259,8 @@ def chat():
 
         # Extract tool call results from messages with role='tool'
         tool_outputs = []
-        if hasattr(result, "messages") and result.messages:
-            for msg in result.messages:
+        if new_messages:
+            for msg in new_messages:
                 if getattr(msg, "role", None) == "tool":
                     content = msg.content
                     if isinstance(content, str):
