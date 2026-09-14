@@ -7,17 +7,6 @@ import { execAsync, tokenize } from '../../../lib/execAsync';
 import { loadChatletsConfig, getBashCommandsPrompt } from '../../../../shared/config-loader';
 
 /**
- * Reads the LLM configuration from config.json.
- */
-async function loadConfig() {
-  const data = await fs.readFile(
-    `${process.cwd()}/config.json`,
-    'utf-8'
-  );
-  return JSON.parse(data);
-}
-
-/**
  * Bash tool definition – executes a command with a 30‑second timeout.
  */
 const bashTool = tool({
@@ -28,7 +17,7 @@ const bashTool = tool({
   }),
   execute: (async ({ command }: any) => {
     // Load allow list configuration
-    const cfg = await loadConfig();
+    const cfg = loadChatletsConfig();
     const allowAll = cfg.allowAll ?? false;
     const allowList = cfg.allowList ?? ['ls', 'pwd'];
 
@@ -79,7 +68,7 @@ export async function POST(request: Request) {
       ? `${history}\n\nUser: ${prompt}`
       : prompt;
 
-    const cfg = await loadConfig();
+    const cfg = loadChatletsConfig();
     const provider = createOpenAICompatible({
       name: cfg.provider,
       baseURL: cfg.baseURL,
